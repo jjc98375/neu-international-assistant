@@ -1,0 +1,18 @@
+# Web UI (kept as a local debug interface; will be replaced by Next.js)
+streamlit>=1.36
+
+# Config
+python-dotenv>=1.0
+
+# LangChain stack
+langchain>=0.3
+langchain-community>=0.3
+langchain-openai>=0.2
+langchain-qdrant>=0.2
+
+# Vector store + LLM clients
+qdrant-client>=1.12
+openai>=1.50
+
+# PDF processing
+pypdf>=4.3
