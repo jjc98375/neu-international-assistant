@@ -43,3 +43,8 @@ requirements.tsx.bak
 
 # local scratch (holds personal transcript PDFs, scripts — never commit)
 tmp/
+
+# tool scratch
+.omc/
+.superpowers/
+__pycache__/

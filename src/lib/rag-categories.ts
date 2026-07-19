@@ -1,14 +1,17 @@
 // src/lib/rag-categories.ts
-/** Category keys + labels — MUST match CATEGORIES in ingestion/ingest.py. */
+/**
+ * Category keys + labels — keys MUST match CATEGORIES in ingestion/ingest.py.
+ *
+ * Consolidated from the original 8 categories (2026-07): `arrival` and `forms`
+ * merged into `visa` (all immigration paperwork), `tuition` merged into
+ * `billing` (all money topics). Labels reflect the merged scope.
+ */
 export const AVAILABLE_CATEGORIES = {
-  arrival: "Arrival",
-  billing: "Billing",
+  billing: "Billing & Tuition",
   course: "Course Registration",
-  employment: "Employment",
-  forms: "forms",
+  employment: "Co-op & Employment",
   scholarships: "Scholarships",
-  tuition: "Tuition&Fees",
-  visa: "Visa",
+  visa: "Visa & Immigration",
 } as const;
 
 export type Category = keyof typeof AVAILABLE_CATEGORIES;

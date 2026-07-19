@@ -80,6 +80,25 @@ describe("retrieve", () => {
     ]);
   });
 
+  it("adds a metadata.campus any-match clause when a campus is given", async () => {
+    mockEmbeddings([0.1]);
+    const search = vi.fn().mockResolvedValue([
+      { score: 0.7, payload: { page_content: "toronto aid", metadata: { filename: "to.pdf", category: "scholarships", campus: "toronto" } } },
+    ]);
+    vi.mocked(getQdrant).mockReturnValue({ search } as unknown as ReturnType<typeof getQdrant>);
+
+    await retrieve("scholarships in toronto", "scholarships", "toronto");
+
+    expect(search).toHaveBeenCalledWith("test_collection", expect.objectContaining({
+      filter: {
+        must: [
+          { key: "metadata.category", match: { value: "scholarships" } },
+          { key: "metadata.campus", match: { any: ["all", "canada", "toronto"] } },
+        ],
+      },
+    }));
+  });
+
   it("omits the filter when category is 'unknown'", async () => {
     mockEmbeddings([0.1]);
     const search = vi.fn().mockResolvedValue([]);
@@ -159,7 +178,7 @@ describe("answerQuestion", () => {
     });
     const out = await answerQuestion("F-1 docs?");
     expect(out.category).toBe("visa");
-    expect(out.categoryName).toBe("Visa");
+    expect(out.categoryName).toBe("Visa & Immigration");
     expect(out.answer).toBe("You need an I-20.");
     expect(out.sources).toEqual([
       { filename: "i20.pdf", preview: "I-20 details", metadata: { filename: "i20.pdf", category: "visa" } },
@@ -170,7 +189,7 @@ describe("answerQuestion", () => {
     mockFull({ answer: "Billing answer.", chunks: [] });
     const out = await answerQuestion("How do I pay?", "billing");
     expect(out.category).toBe("billing");
-    expect(out.categoryName).toBe("Billing");
+    expect(out.categoryName).toBe("Billing & Tuition");
     expect(out.answer).toBe("Billing answer.");
   });
 
@@ -226,7 +245,7 @@ describe("answerQuestion", () => {
     // The tuition case: a fee doc scores fine (0.6) so the score gate doesn't fire,
     // but the answer model reports answered:false → still fall back to web.
     const chat = vi.fn()
-      .mockResolvedValueOnce({ choices: [{ message: { content: JSON.stringify({ category: "tuition" }) } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { content: JSON.stringify({ category: "billing" }) } }] })
       .mockResolvedValueOnce({
         choices: [{ message: { content: JSON.stringify({ answered: false, answer: "The context doesn't list the per-credit rate." }) } }],
       });
@@ -243,7 +262,7 @@ describe("answerQuestion", () => {
     } as unknown as ReturnType<typeof getOpenAI>);
     vi.mocked(getQdrant).mockReturnValue({
       search: vi.fn().mockResolvedValue([
-        { score: 0.6, payload: { page_content: "fee descriptions", metadata: { filename: "fees.pdf", category: "tuition" } } },
+        { score: 0.6, payload: { page_content: "fee descriptions", metadata: { filename: "fees.pdf", category: "billing" } } },
       ]),
     } as unknown as ReturnType<typeof getQdrant>);
 

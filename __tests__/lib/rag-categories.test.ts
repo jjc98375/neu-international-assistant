@@ -7,16 +7,15 @@ import {
 } from "@/lib/rag-categories";
 
 describe("rag-categories", () => {
-  it("has exactly the 8 ingestion categories", () => {
+  it("has exactly the 5 consolidated ingestion categories", () => {
     expect(CATEGORY_KEYS).toEqual([
-      "arrival", "billing", "course", "employment",
-      "forms", "scholarships", "tuition", "visa",
+      "billing", "course", "employment", "scholarships", "visa",
     ]);
   });
 
   it("maps keys to human labels matching ingest.py", () => {
-    expect(AVAILABLE_CATEGORIES.visa).toBe("Visa");
-    expect(AVAILABLE_CATEGORIES.tuition).toBe("Tuition&Fees");
+    expect(AVAILABLE_CATEGORIES.visa).toBe("Visa & Immigration");
+    expect(AVAILABLE_CATEGORIES.billing).toBe("Billing & Tuition");
     expect(AVAILABLE_CATEGORIES.course).toBe("Course Registration");
   });
 
@@ -24,5 +23,11 @@ describe("rag-categories", () => {
     expect(isCategory("visa")).toBe(true);
     expect(isCategory("auto")).toBe(false);
     expect(isCategory("nonsense")).toBe(false);
+  });
+
+  it("rejects the pre-consolidation keys folded into visa/billing", () => {
+    expect(isCategory("arrival")).toBe(false);
+    expect(isCategory("forms")).toBe(false);
+    expect(isCategory("tuition")).toBe(false);
   });
 });

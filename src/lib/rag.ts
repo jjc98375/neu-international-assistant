@@ -1,7 +1,9 @@
 // src/lib/rag.ts
 import type { Category } from "@/lib/rag-categories";
+import type { Campus } from "@/lib/campuses";
 import { getOpenAI, getQdrant, COLLECTION } from "@/lib/rag-clients";
 import { AVAILABLE_CATEGORIES, CATEGORY_KEYS, isCategory } from "@/lib/rag-categories";
+import { AVAILABLE_CAMPUSES, campusFilterValues } from "@/lib/campuses";
 
 export interface RetrievedChunk {
   content: string;
@@ -36,14 +38,25 @@ export function buildPrompt(
   categoryLabel: string,
   context: string,
   question: string,
+  campusLabel?: string,
 ): string {
+  const campusLine = campusLabel
+    ? `The student is based at Northeastern's ${campusLabel} campus — prefer ` +
+      `campus-specific policies when they differ, and say when a policy is ` +
+      `specific to another campus.\n\n`
+    : "";
   return (
     `You are a helpful assistant for Northeastern University international ` +
     `students, specifically answering questions about ${categoryLabel}.\n\n` +
-    `Use ALL relevant information from the context. Be specific and ` +
-    `comprehensive, include policies, dates, amounts, and procedures when ` +
-    `they appear. Synthesize across documents. Never invent details about ` +
-    `${categoryLabel}.\n\n` +
+    campusLine +
+    `Use ALL relevant information from the context. Be specific — include ` +
+    `policies, dates, amounts, and procedures when they appear. Never invent ` +
+    `details about ${categoryLabel}.\n\n` +
+    `Style: answer in markdown. Lead with the direct answer in the first ` +
+    `sentence. Keep it SHORT — under ~120 words unless the question truly ` +
+    `needs steps. Put key figures, dates, and deadlines in **bold**. Use a ` +
+    `short bullet list when listing items; otherwise plain sentences. No ` +
+    `headings, no sign-off, no "let me know if" filler.\n\n` +
     `Respond as JSON: {"answered": boolean, "answer": string}. Set ` +
     `"answered" to false when the context does NOT contain the specific ` +
     `information the question asks for (e.g. a figure, rate, or policy that ` +
@@ -108,10 +121,16 @@ interface ScoredResult {
   payload?: { page_content?: string; metadata?: Record<string, unknown> };
 }
 
-function buildFilter(category: Category | "unknown") {
-  return category === "unknown"
-    ? undefined
-    : { must: [{ key: "metadata.category", match: { value: category } }] };
+function buildFilter(category: Category | "unknown", campus?: Campus) {
+  const must: unknown[] = [];
+  if (category !== "unknown") {
+    must.push({ key: "metadata.category", match: { value: category } });
+  }
+  if (campus) {
+    // Docs are tagged with a campus key, a region ("us"/"canada"/"london"), or "all".
+    must.push({ key: "metadata.campus", match: { any: campusFilterValues(campus) } });
+  }
+  return must.length > 0 ? { must } : undefined;
 }
 
 function mapResults(results: ScoredResult[]): RetrievedChunk[] {
@@ -143,9 +162,12 @@ export async function classifyCategory(question: string): Promise<Category | "un
           `Routing guidance for commonly-confused topics:\n` +
           `- Any work authorization — OPT, STEM OPT, CPT, co-op, on-campus jobs, ` +
           `assistantships, employment authorization — goes to "employment", NOT "visa".\n` +
-          `- "visa" is for the consular/entry process only: visa interviews, DS-160, ` +
-          `consulate appointments, SEVIS fee, port of entry.\n` +
-          `- Health insurance / NUSHP, fees, and payments go to "billing" or "tuition".\n\n` +
+          `- "visa" covers all immigration status and paperwork: visa interviews, DS-160, ` +
+          `consulate appointments, SEVIS fee, port of entry, arrival and orientation, ` +
+          `I-20/DS-2019 requests, OGS forms, program extensions, leaves of absence, ` +
+          `travel signatures.\n` +
+          `- All money topics — tuition rates, fees, payment plans, ` +
+          `health insurance / NUSHP — go to "billing".\n\n` +
           `Question: ${question}\n\n` +
           `Respond with JSON: {"category": "<key or unknown>"}`,
       },
@@ -165,6 +187,7 @@ export async function classifyCategory(question: string): Promise<Category | "un
 export async function retrieve(
   question: string,
   category: Category | "unknown",
+  campus?: Campus,
 ): Promise<RetrievedChunk[]> {
   const emb = await getOpenAI().embeddings.create({
     model: EMBEDDING_MODEL,
@@ -172,19 +195,19 @@ export async function retrieve(
   });
   const vector = emb.data[0].embedding as number[];
 
-  // LangChain-Qdrant stores each point as { page_content: string, metadata: { filename, category, … } };
-  // the dot-path filter key "metadata.category" matches that nested payload (parity with ingestion/ingest.py).
+  // LangChain-Qdrant stores each point as { page_content: string, metadata: { filename, category, campus, … } };
+  // the dot-path filter keys match that nested payload (parity with ingestion/ingest.py).
   const filtered = (await getQdrant().search(COLLECTION, {
     vector,
     limit: TOP_K,
     with_payload: true,
-    filter: buildFilter(category),
+    filter: buildFilter(category, campus),
   })) as ScoredResult[];
 
-  // Low-confidence fallback: when a category filter was applied but its best match
-  // is weak (or empty), the classifier likely misrouted — retry unfiltered and keep
-  // whichever surfaced the stronger top match.
-  if (category !== "unknown") {
+  // Low-confidence fallback: when a filter was applied but its best match is weak
+  // (or empty), the classifier likely misrouted (or the campus slice is thin) —
+  // retry unfiltered and keep whichever surfaced the stronger top match.
+  if (category !== "unknown" || campus) {
     const topScore = typeof filtered[0]?.score === "number" ? filtered[0].score : undefined;
     const weak = filtered.length === 0 || (topScore !== undefined && topScore < SCORE_FLOOR);
     if (weak) {
@@ -214,18 +237,39 @@ export async function retrieve(
  */
 export async function searchWeb(
   question: string,
+  campusLabel?: string,
 ): Promise<{ answer: string; sources: SourceDoc[] }> {
+  const campusLine = campusLabel
+    ? ` The student is based at Northeastern's ${campusLabel} campus — prefer ` +
+      `campus-specific information.`
+    : "";
   const res = await getOpenAI().responses.create({
     model: WEB_SEARCH_MODEL,
+    // Low reasoning effort: gpt-5-mini's default (medium) spends many internal
+    // reasoning tokens before and between tool calls, pushing this single web
+    // search past 40s — low keeps tool-use quality while cutting that way down.
+    reasoning: { effort: "low" },
     tools: [{ type: "web_search", filters: { allowed_domains: WEB_ALLOWED_DOMAINS } }],
     input:
       `You are helping a Northeastern University international student. Answer the ` +
-      `question using current, official Northeastern information. Be specific and ` +
-      `cite figures, dates, and procedures when available. If you cannot find it, ` +
-      `say so plainly.\n\nQuestion: ${question}`,
+      `question using current, official Northeastern information. Be specific with ` +
+      `figures, dates, and procedures. If you cannot find it, say so plainly.` +
+      `${campusLine}\n\n` +
+      `Style: answer in markdown. Lead with the direct answer in the first ` +
+      `sentence. Keep it SHORT — under ~150 words. Put key figures, dates, and ` +
+      `deadlines in **bold**. Use a short bullet list when listing items. Do NOT ` +
+      `put inline URL citations or links in the text — sources are shown to the ` +
+      `user separately. No headings, no sign-off, no "if you want, I can" filler.\n\n` +
+      `Question: ${question}`,
   } as Parameters<ReturnType<typeof getOpenAI>["responses"]["create"]>[0]);
 
-  const answer = (res as { output_text?: string }).output_text ?? "";
+  // The web-search model inlines citations as "([domain](url))" parentheticals
+  // even when told not to; strip them — the same URLs are returned separately
+  // as sources via the url_citation annotations below.
+  const answer = ((res as { output_text?: string }).output_text ?? "").replace(
+    /\s*\(\[[^\]]+\]\([^)]+\)\)/g,
+    "",
+  );
 
   const sources: SourceDoc[] = [];
   const seen = new Set<string>();
@@ -256,15 +300,17 @@ export async function searchWeb(
 export async function answerQuestion(
   question: string,
   category?: Category,
+  campus?: Campus,
 ): Promise<AssistantAnswer> {
   const resolved: Category | "unknown" = category ?? (await classifyCategory(question));
+  const campusLabel = campus ? AVAILABLE_CAMPUSES[campus] : undefined;
 
-  const chunks = await retrieve(question, resolved);
+  const chunks = await retrieve(question, resolved, campus);
 
   // Helper: run the live web fallback, returning a full answer or null if it can't help.
   const webFallback = async (): Promise<AssistantAnswer | null> => {
     try {
-      const web = await searchWeb(question);
+      const web = await searchWeb(question, campusLabel);
       if (!web.answer.trim()) return null;
       return {
         category: resolved,
@@ -297,7 +343,7 @@ export async function answerQuestion(
     model: ANSWER_MODEL,
     temperature: 0.2,
     response_format: { type: "json_object" },
-    messages: [{ role: "user", content: buildPrompt(label, context, question) }],
+    messages: [{ role: "user", content: buildPrompt(label, context, question, campusLabel) }],
   });
   const { answer, answered } = parseGroundedAnswer(
     completion.choices[0]?.message?.content ?? "",

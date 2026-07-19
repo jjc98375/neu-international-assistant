@@ -26,15 +26,38 @@ from qdrant_client.http import models as qmodels
 
 load_dotenv()
 
+# Five runtime categories (keys MUST match src/lib/rag-categories.ts), each fed by
+# one or more folders on disk. Folder names predate the 2026-07 consolidation:
+# Arrival + forms merged into "visa", Tuition&Fees into "billing".
 CATEGORIES = {
-    "arrival": "Arrival",
-    "billing": "Billing",
-    "course": "Course Registration",
-    "employment": "Employment",
-    "forms": "forms",
-    "scholarships": "Scholarships",
-    "tuition": "Tuition&Fees",
-    "visa": "Visa",
+    "billing": ["Billing", "Tuition&Fees"],
+    "course": ["Course Registration"],
+    "employment": ["Employment"],
+    "scholarships": ["Scholarships"],
+    "visa": ["Visa", "Arrival", "forms"],
+}
+
+# Campus tagging (mirrors src/lib/campuses.ts): PDFs directly in a category
+# folder get the category's default region tag; PDFs inside a campus subfolder
+# (e.g. Scholarships/Toronto/) get that subfolder's tag. The runtime filter
+# matches metadata.campus against {campus key, region, "all"}.
+CATEGORY_DEFAULT_CAMPUS = {
+    "billing": "us",       # SFS/NUSHP pages are US-campus billing
+    "course": "all",       # registrar/calendar apply network-wide
+    "employment": "us",    # OGS work-authorization docs are F-1/US
+    "scholarships": "all",
+    "visa": "us",          # OGS immigration docs are F-1/US
+}
+CAMPUS_FOLDERS = {
+    "boston": "boston",
+    "seattle": "seattle",
+    "silicon valley": "silicon-valley",
+    "oakland": "oakland",
+    "toronto": "toronto",
+    "vancouver": "vancouver",
+    "canada": "canada",
+    "london": "london",
+    "us": "us",
 }
 
 BASE_DIR = Path("./northeastern_docs")
@@ -47,28 +70,34 @@ CHUNK_OVERLAP = 200
 
 def load_documents():
     documents = []
-    for cat_key, folder in CATEGORIES.items():
-        folder_path = BASE_DIR / folder
-        if not folder_path.exists():
-            print(f"  skip {folder!r}: folder not found")
-            continue
-        pdfs = list(folder_path.glob("**/*.pdf"))
-        print(f"  {folder}: {len(pdfs)} PDFs")
-        for pdf in pdfs:
-            try:
-                docs = PyPDFLoader(str(pdf)).load()
-                for d in docs:
-                    d.metadata.update(
-                        {
-                            "filename": pdf.name,
-                            "folder": folder,
-                            "category": cat_key,
-                            "source": str(pdf),
-                        }
-                    )
-                documents.extend(docs)
-            except Exception as e:
-                print(f"    failed {pdf.name}: {e}")
+    for cat_key, folders in CATEGORIES.items():
+        for folder in folders:
+            folder_path = BASE_DIR / folder
+            if not folder_path.exists():
+                print(f"  skip {folder!r}: folder not found")
+                continue
+            pdfs = list(folder_path.glob("**/*.pdf"))
+            print(f"  {folder} -> {cat_key}: {len(pdfs)} PDFs")
+            for pdf in pdfs:
+                rel = pdf.relative_to(folder_path)
+                campus = CATEGORY_DEFAULT_CAMPUS[cat_key]
+                if len(rel.parts) > 1:
+                    campus = CAMPUS_FOLDERS.get(rel.parts[0].lower(), campus)
+                try:
+                    docs = PyPDFLoader(str(pdf)).load()
+                    for d in docs:
+                        d.metadata.update(
+                            {
+                                "filename": pdf.name,
+                                "folder": folder,
+                                "category": cat_key,
+                                "campus": campus,
+                                "source": str(pdf),
+                            }
+                        )
+                    documents.extend(docs)
+                except Exception as e:
+                    print(f"    failed {pdf.name}: {e}")
     return documents
 
 
@@ -123,12 +152,13 @@ def main():
 
     # Qdrant requires a payload index on any field used in a filter.
     # The runtime query path filters on metadata.category, so index it here.
-    print("Creating payload index on metadata.category (required for category-filtered search)...")
-    client.create_payload_index(
-        collection_name=COLLECTION,
-        field_name="metadata.category",
-        field_schema=qmodels.PayloadSchemaType.KEYWORD,
-    )
+    print("Creating payload indexes on metadata.category / metadata.campus (required for filtered search)...")
+    for field in ("metadata.category", "metadata.campus"):
+        client.create_payload_index(
+            collection_name=COLLECTION,
+            field_name=field,
+            field_schema=qmodels.PayloadSchemaType.KEYWORD,
+        )
 
     points = client.get_collection(COLLECTION).points_count
     print(f"Done. Collection {COLLECTION!r} now holds {points} points.")

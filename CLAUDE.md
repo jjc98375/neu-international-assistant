@@ -36,7 +36,7 @@ __tests__/                   # Vitest tests (RAG + API + component)
 ## RAG flow (single-shot, stateless)
 
 `POST /api/assistant {question, category?}`
-→ auto-classify into one of 8 categories via `gpt-4o-mini` (or explicit `category`; `unknown` → no filter)
+→ auto-classify into one of 5 categories via `gpt-4o-mini` (or explicit `category`; `unknown` → no filter)
 → embed with `text-embedding-3-small`
 → category-filtered Qdrant similarity search (k=6)
 → category-aware prompt → `gpt-4o-mini` answer
@@ -50,9 +50,19 @@ cosine), or (2) the answer model returns `{"answered": false}`. Web answers retu
 `categoryName: "Live web · northeastern.edu"`, `viaWeb: true`, and URL-citation sources
 (`metadata.source: "web"`). Failures degrade gracefully to the corpus answer.
 
-**Categories** (key→label): `arrival`→Arrival, `billing`→Billing, `course`→Course Registration,
-`employment`→Employment, `forms`→forms, `scholarships`→Scholarships, `tuition`→Tuition&Fees,
-`visa`→Visa.
+**Categories** (key→label): `billing`→Billing & Tuition, `course`→Course Registration,
+`employment`→Co-op & Employment, `scholarships`→Scholarships, `visa`→Visa & Immigration.
+Consolidated from 8 in 2026-07: doc folders `Arrival` + `forms` now ingest as `visa`,
+`Tuition&Fees` as `billing` (folder names on disk unchanged; see CATEGORIES in `ingest.py`).
+
+**Campus filter** (`src/lib/campuses.ts`): requests may carry `campus` (boston,
+silicon-valley, seattle, toronto, vancouver, london; `all`/absent = no filter). Docs get a
+`metadata.campus` tag at ingestion — campus subfolders (e.g. `Scholarships/Toronto/`) tag
+specifically; category-folder roots default to `us` (OGS F-1 docs) or `all` (see
+CATEGORY_DEFAULT_CAMPUS in `ingest.py`). Retrieval filters campus ∈ {campus, region, all}
+where region is `us` (US campuses), `canada` (Toronto/Vancouver), or `london` — so Canadian
+students never retrieve F-1 documents. The UI campus dropdown lives in the quad chip row.
+Corpus provenance: `ingestion/SOURCES.md`.
 
 ## Environment
 
@@ -80,9 +90,14 @@ npx vitest run           # unit + component tests
 RUN_RAG_INTEGRATION=1 npx vitest run --config vitest.integration.config.mts   # live Qdrant/OpenAI
 ```
 
-## Planned redesign
+## Assistant page ("Quad" redesign — implemented)
 
-The chat page will get a campus toggle (Boston · Silicon Valley · Seattle · Toronto · London;
-background swap + prompt hint, no per-campus corpus), a left-side roster of 9 pixel-art
-"expert" sprites (8 categories + a neutral guide for Auto), and Layout C (avatar-in-chat).
-Details + the ready-to-use design prompt are in `HANDOFF.md`.
+`/assistant` is a pixel-art scene: an animated hand-drawn SVG of the Boston quad
+(`src/components/PixelQuad.tsx` — 320×180 grid, drifting clouds + waving flag, keyframes in
+`globals.css`, all disabled under `prefers-reduced-motion`). Five expert sprites stand in one
+line — Course Registration (`course`), Co-op (`employment`), Visa (`visa`), Billing
+(`billing`), Scholarship (`scholarships`) — clicking one pulls up a game-dialog chat wired to
+`/api/assistant` with that expert's category. Per-expert chat histories, source citations,
+live-web badge, `?expert=<id>` deep links. Fonts: Press Start 2P + IBM Plex Mono via
+next/font. (The original 9-sprite plan in `HANDOFF.md` is superseded; the campus toggle
+remains unbuilt.)

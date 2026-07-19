@@ -25,7 +25,7 @@ describe("POST /api/assistant", () => {
     const data = await res.json();
     expect(res.status).toBe(200);
     expect(data.answer).toBe("a");
-    expect(vi.mocked(rag.answerQuestion)).toHaveBeenCalledWith("F-1 docs?", undefined);
+    expect(vi.mocked(rag.answerQuestion)).toHaveBeenCalledWith("F-1 docs?", undefined, undefined);
   });
 
   it("passes an explicit valid category through", async () => {
@@ -33,7 +33,7 @@ describe("POST /api/assistant", () => {
       category: "billing", categoryName: "Billing", question: "q", answer: "a", sources: [],
     });
     await POST(postReq({ question: "pay?", category: "billing" }));
-    expect(vi.mocked(rag.answerQuestion)).toHaveBeenCalledWith("pay?", "billing");
+    expect(vi.mocked(rag.answerQuestion)).toHaveBeenCalledWith("pay?", "billing", undefined);
   });
 
   it("treats category 'auto' as undefined", async () => {
@@ -41,7 +41,24 @@ describe("POST /api/assistant", () => {
       category: "unknown", categoryName: "All categories", question: "q", answer: "a", sources: [],
     });
     await POST(postReq({ question: "hi", category: "auto" }));
-    expect(vi.mocked(rag.answerQuestion)).toHaveBeenCalledWith("hi", undefined);
+    expect(vi.mocked(rag.answerQuestion)).toHaveBeenCalledWith("hi", undefined, undefined);
+  });
+
+  it("passes a valid campus through and treats 'all' as undefined", async () => {
+    vi.mocked(rag.answerQuestion).mockResolvedValue({
+      category: "scholarships", categoryName: "Scholarships", question: "q", answer: "a", sources: [],
+    });
+    await POST(postReq({ question: "aid?", category: "scholarships", campus: "toronto" }));
+    expect(vi.mocked(rag.answerQuestion)).toHaveBeenCalledWith("aid?", "scholarships", "toronto");
+
+    await POST(postReq({ question: "aid?", category: "scholarships", campus: "all" }));
+    expect(vi.mocked(rag.answerQuestion)).toHaveBeenLastCalledWith("aid?", "scholarships", undefined);
+  });
+
+  it("returns 400 for an unknown campus", async () => {
+    const res = await POST(postReq({ question: "q", campus: "mars" }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("unknown campus: mars");
   });
 
   it("returns 400 when question is empty", async () => {
