@@ -17,6 +17,21 @@ describe("quota", () => {
       .toBe("2026-01-15T05:00:00.000Z");
   });
 
+  it("is stable across the 2026 spring-forward day (2026-03-08)", () => {
+    // pre-transition (01:00 ET, EST) and post-transition (14:00 ET, EDT) must agree
+    const pre = etDayStartUtc(new Date("2026-03-08T06:00:00Z"));
+    const post = etDayStartUtc(new Date("2026-03-08T18:00:00Z"));
+    expect(pre.toISOString()).toBe("2026-03-08T05:00:00.000Z");
+    expect(post.toISOString()).toBe("2026-03-08T05:00:00.000Z");
+  });
+
+  it("is stable across the 2026 fall-back day (2026-11-01)", () => {
+    const pre = etDayStartUtc(new Date("2026-11-01T04:30:00Z")); // 00:30 ET EDT
+    const post = etDayStartUtc(new Date("2026-11-01T19:00:00Z")); // 14:00 ET EST
+    expect(pre.toISOString()).toBe("2026-11-01T04:00:00.000Z");
+    expect(post.toISOString()).toBe("2026-11-01T04:00:00.000Z");
+  });
+
   it("resolves tier from active subscriptions only", () => {
     expect(resolveTier([])).toBe("free");
     expect(resolveTier([{ plan: "plus", status: "active" }])).toBe("plus");
