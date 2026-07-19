@@ -78,8 +78,10 @@ cannot drift out of sync with reality the way a counter table can.
   pixel-styled plan cards) instead of an answer. Reading history stays unlimited.
 
 ### Conversations & drawer
-- Clicking an expert sprite opens the **most recent** conversation with that expert; `+ NEW`
-  in the chat header starts a fresh room.
+- Logged-out users keep today's behavior: one ephemeral in-memory thread per expert, nothing
+  persisted server-side.
+- For logged-in users, clicking an expert sprite opens the **most recent** conversation with
+  that expert; `+ NEW` in the chat header starts a fresh room.
 - Drawer (`▤ MY CHATS`, login-only): pinned section on top, then rest by recency. Row =
   expert sprite icon + title + relative time; hover reveals 📌 toggle and delete.
 - Row click opens that conversation in the chat popup (fully resumable).
@@ -138,4 +140,4 @@ modal, drawer, paywall plan cards, usage HUD chip. Copy stays in the app's in-wo
 - Email verification enforcement beyond better-auth defaults.
 - Admin dashboard (Stripe Dashboard + Neon console suffice).
 - IP-based anonymous abuse prevention.
-- Migrating the existing in-memory-only chat behavior for logged-out users beyond the 2-question allowance.
+- Free trials or `trialing` subscription states — only `active` counts as paid.
