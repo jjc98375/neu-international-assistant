@@ -2,8 +2,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/rag", () => ({ answerQuestion: vi.fn() }));
+vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: vi.fn() } } }));
+vi.mock("@/lib/chat-store", () => ({
+  countQuestionsToday: vi.fn(), getActiveSubscriptions: vi.fn().mockResolvedValue([]),
+  saveExchange: vi.fn().mockResolvedValue({ conversationId: "c1" }),
+}));
 
 import * as rag from "@/lib/rag";
+import { auth } from "@/lib/auth";
+import * as store from "@/lib/chat-store";
 import { POST } from "@/app/api/assistant/route";
 
 function postReq(body: unknown) {
@@ -14,7 +21,14 @@ function postReq(body: unknown) {
   });
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  process.env.BETTER_AUTH_SECRET = "test-secret";
+  vi.mocked(auth.api.getSession).mockResolvedValue(null as never);
+  vi.mocked(store.countQuestionsToday).mockResolvedValue(0);
+  vi.mocked(store.getActiveSubscriptions).mockResolvedValue([]);
+  vi.mocked(store.saveExchange).mockResolvedValue({ conversationId: "c1" });
+});
 
 describe("POST /api/assistant", () => {
   it("returns the answer on success (auto category → undefined)", async () => {
@@ -91,5 +105,46 @@ describe("POST /api/assistant", () => {
     const data = await res.json();
     expect(res.status).toBe(502);
     expect(data.error).toBe("OpenAI down");
+  });
+
+  it("gates the 3rd anonymous question with 401", async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(null as never);
+    process.env.BETTER_AUTH_SECRET = "test-secret";
+    const { serializeAnonCookie } = await import("@/lib/gate");
+    const cookie = serializeAnonCookie(2).split(";")[0];
+    const res = await POST(new Request("http://l/api/assistant", {
+      method: "POST", headers: { "Content-Type": "application/json", cookie },
+      body: JSON.stringify({ question: "q3" }) }));
+    expect(res.status).toBe(401);
+    expect((await res.json()).gate).toBe(true);
+  });
+
+  it("answers anonymous question 1 and sets the incremented cookie", async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(null as never);
+    vi.mocked(rag.answerQuestion).mockResolvedValue({ category: "visa", categoryName: "V",
+      question: "q", answer: "a", sources: [] });
+    const res = await POST(postReq({ question: "q1" }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie")).toContain("neu_anon=1.");
+    expect((await res.json()).usage).toEqual({ used: 1, limit: 2, tier: "anon" });
+  });
+
+  it("blocks a free user at 10 with 429 + usage payload", async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue({ user: { id: "u1" } } as never);
+    vi.mocked(store.countQuestionsToday).mockResolvedValue(10);
+    const res = await POST(postReq({ question: "q" }));
+    expect(res.status).toBe(429);
+    expect((await res.json()).usage).toEqual({ used: 10, limit: 10, tier: "free" });
+  });
+
+  it("persists and returns conversationId + usage for a logged-in user", async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue({ user: { id: "u1" } } as never);
+    vi.mocked(store.countQuestionsToday).mockResolvedValue(0);
+    vi.mocked(rag.answerQuestion).mockResolvedValue({ category: "visa", categoryName: "V",
+      question: "q", answer: "a", sources: [] });
+    const res = await POST(postReq({ question: "q", expertId: "visa" }));
+    const data = await res.json();
+    expect(data.conversationId).toBe("c1");
+    expect(data.usage).toEqual({ used: 1, limit: 10, tier: "free" });
   });
 });

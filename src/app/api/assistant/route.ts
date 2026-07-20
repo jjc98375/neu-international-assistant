@@ -6,11 +6,17 @@ import { isCategory } from "@/lib/rag-categories";
 import type { Category } from "@/lib/rag-categories";
 import { isCampus } from "@/lib/campuses";
 import type { Campus } from "@/lib/campuses";
+import { auth } from "@/lib/auth";
+import { readAnonCount, serializeAnonCookie, ANON_LIMIT } from "@/lib/gate";
+import { PLAN_LIMITS, resolveTier } from "@/lib/quota";
+import { countQuestionsToday, getActiveSubscriptions, saveExchange } from "@/lib/chat-store";
 
 const BodySchema = z.object({
   question: z.string().trim().min(1, "question is required").max(2000, "question too long"),
   category: z.string().optional(),
   campus: z.string().optional(),
+  conversationId: z.string().optional(),
+  expertId: z.string().optional(),
 });
 
 export async function POST(req: Request) {
@@ -48,9 +54,45 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `unknown campus: ${campus}` }, { status: 400 });
   }
 
+  // --- auth / gate / quota (server-side enforcement) ---
+  const session = await auth.api.getSession({ headers: req.headers });
+
+  let anonCount = 0;
+  let usage: { used: number; limit: number; tier: string };
+  if (!session) {
+    anonCount = readAnonCount(req.headers.get("cookie"));
+    if (anonCount >= ANON_LIMIT) {
+      return NextResponse.json({ error: "login_required", gate: true }, { status: 401 });
+    }
+    usage = { used: anonCount + 1, limit: ANON_LIMIT, tier: "anon" };
+  } else {
+    const tier = resolveTier(await getActiveSubscriptions(session.user.id));
+    const used = await countQuestionsToday(session.user.id);
+    if (used >= PLAN_LIMITS[tier]) {
+      return NextResponse.json(
+        { error: "quota_exceeded", usage: { used, limit: PLAN_LIMITS[tier], tier } },
+        { status: 429 });
+    }
+    usage = { used: used + 1, limit: PLAN_LIMITS[tier], tier };
+  }
+
   try {
     const result = await answerQuestion(question, resolved, resolvedCampus);
-    return NextResponse.json(result);
+
+    let conversationId = parsed.data.conversationId;
+    if (session) {
+      try {
+        ({ conversationId } = await saveExchange({
+          userId: session.user.id, conversationId, expertId: parsed.data.expertId ?? "visa",
+          campus: resolvedCampus, question, answer: result,
+        }));
+      } catch (e) {
+        console.error("persist failed", e); // RAG answer still returned
+      }
+    }
+    const res = NextResponse.json({ ...result, conversationId, usage });
+    if (!session) res.headers.set("Set-Cookie", serializeAnonCookie(anonCount + 1));
+    return res;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: msg }, { status: 502 });
