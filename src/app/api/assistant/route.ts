@@ -19,6 +19,14 @@ const BodySchema = z.object({
   expertId: z.string().optional(),
 });
 
+function toExpertId(category: string): string {
+  const map: Record<string, string> = {
+    course: "course", employment: "coop", scholarships: "scholarship",
+    billing: "billing", visa: "visa",
+  };
+  return map[category] ?? "visa"; // "unknown" or unrecognized -> visa (existing safe default)
+}
+
 export async function POST(req: Request) {
   let raw: unknown;
   try {
@@ -83,7 +91,8 @@ export async function POST(req: Request) {
     if (session) {
       try {
         ({ conversationId } = await saveExchange({
-          userId: session.user.id, conversationId, expertId: parsed.data.expertId ?? "visa",
+          userId: session.user.id, conversationId,
+          expertId: parsed.data.expertId ?? toExpertId(result.category),
           campus: resolvedCampus, question, answer: result,
         }));
       } catch (e) {

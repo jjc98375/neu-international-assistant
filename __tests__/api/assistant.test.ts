@@ -147,4 +147,14 @@ describe("POST /api/assistant", () => {
     expect(data.conversationId).toBe("c1");
     expect(data.usage).toEqual({ used: 1, limit: 10, tier: "free" });
   });
+
+  it("derives expertId from the RAG category when the client omits it", async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue({ user: { id: "u1" } } as never);
+    vi.mocked(store.countQuestionsToday).mockResolvedValue(0);
+    vi.mocked(rag.answerQuestion).mockResolvedValue({ category: "billing", categoryName: "Billing",
+      question: "q", answer: "a", sources: [] });
+    await POST(postReq({ question: "how much do I owe?" }));
+    expect(store.saveExchange).toHaveBeenCalledWith(
+      expect.objectContaining({ expertId: "billing" }));
+  });
 });

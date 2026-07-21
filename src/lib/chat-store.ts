@@ -31,6 +31,11 @@ export async function saveExchange(args: {
   question: string; answer: AssistantAnswer;
 }): Promise<{ conversationId: string }> {
   let convoId = args.conversationId;
+  if (convoId) {
+    const owned = await db.select({ id: conversations.id }).from(conversations)
+      .where(and(eq(conversations.id, convoId), eq(conversations.userId, args.userId)));
+    if (owned.length === 0) convoId = undefined; // not found or not owned -> create fresh
+  }
   if (!convoId) {
     convoId = crypto.randomUUID();
     await db.insert(conversations).values({
