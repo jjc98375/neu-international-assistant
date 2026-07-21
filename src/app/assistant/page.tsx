@@ -4,8 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Press_Start_2P, IBM_Plex_Mono } from "next/font/google";
 import { PixelQuad } from "@/components/PixelQuad";
+import { LoginModal } from "@/components/LoginModal";
 import type { Category } from "@/lib/rag-categories";
 import { AVAILABLE_CAMPUSES, CAMPUS_KEYS } from "@/lib/campuses";
+import { authClient } from "@/lib/auth-client";
+
+// sessionStorage key: carries {expertId, question} across a full-page OAuth
+// redirect so the gated question can still be auto-resent on return.
+const PENDING_ASK_KEY = "neu_pending_ask";
 
 const pixelFont = Press_Start_2P({
   weight: "400",
@@ -223,8 +229,15 @@ export default function AssistantPage() {
   const [input, setInput] = useState("");
   const [campus, setCampus] = useState("boston");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [loginOpen, setLoginOpen] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const pendingQuestion = useRef<string | null>(null);
+  const pendingExpertId = useRef<string | null>(null);
+  const imported = useRef(false);
+  const prevSession = useRef<unknown>(null);
+
+  const { data: session } = authClient.useSession();
 
   const activeExpert = EXPERTS.find((e) => e.id === active) ?? null;
 
@@ -233,6 +246,33 @@ export default function AssistantPage() {
     const id = new URLSearchParams(window.location.search).get("expert");
     if (id && EXPERTS.some((e) => e.id === id)) setActive(id);
   }, []);
+
+  // Rehydrate a gated question across a full-page OAuth redirect: the ref
+  // above doesn't survive navigation, so we mirror it into sessionStorage
+  // when the gate fires and read it back here on mount.
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(PENDING_ASK_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as { expertId?: string; question?: string };
+      if (saved.expertId && saved.question && EXPERTS.some((e) => e.id === saved.expertId)) {
+        pendingQuestion.current = saved.question;
+        pendingExpertId.current = saved.expertId;
+        setActive(saved.expertId);
+        setInput(saved.question);
+      }
+    } catch {
+      /* sessionStorage unavailable or corrupt payload — ignore, nothing to resume */
+    }
+  }, []);
+
+  // Auto-retry a gated question once the session goes from logged-out to
+  // logged-in (email login/signup calls this directly via onSuccess too;
+  // retryPending() no-ops the second time since it clears the ref first).
+  useEffect(() => {
+    if (!prevSession.current && session) retryPending();
+    prevSession.current = session;
+  }, [session]);
 
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
@@ -251,9 +291,13 @@ export default function AssistantPage() {
     if (active) inputRef.current?.focus();
   }, [active]);
 
-  async function send() {
-    const question = input.trim();
-    const expert = activeExpert;
+  // `overrideQuestion`/`overrideExpertId` let the login-retry paths resend
+  // the gated question without depending on `input`/`active` having already
+  // re-rendered (they're called synchronously, so those closures may still
+  // hold stale/empty values at call time).
+  async function send(overrideQuestion?: string, overrideExpertId?: string) {
+    const question = (overrideQuestion ?? input).trim();
+    const expert = overrideExpertId ? EXPERTS.find((e) => e.id === overrideExpertId) ?? activeExpert : activeExpert;
     if (!question || !expert || busyId) return;
     const id = expert.id;
 
@@ -268,20 +312,37 @@ export default function AssistantPage() {
         body: JSON.stringify({ question, category: expert.category, campus }),
       });
       const data = await res.json();
-      const reply: Msg = res.ok
-        ? {
-            from: "bot",
-            text: data.answer,
-            categoryName: data.categoryName,
-            viaWeb: data.viaWeb,
-            sources: data.sources,
-          }
-        : {
-            from: "bot",
-            text: `Something went wrong on my desk (${data.error ?? `HTTP ${res.status}`}). Ask again in a moment.`,
-            error: true,
-          };
-      setMsgs((m) => ({ ...m, [id]: [...m[id], reply] }));
+
+      if (res.status === 401 && data?.gate) {
+        // Server says an anonymous quota is exhausted: drop the optimistic
+        // user bubble we just added (it re-appears via retryPending() once
+        // login succeeds) and open the login modal instead of showing an
+        // error reply.
+        pendingQuestion.current = question;
+        pendingExpertId.current = id;
+        try {
+          sessionStorage.setItem(PENDING_ASK_KEY, JSON.stringify({ expertId: id, question }));
+        } catch {
+          /* sessionStorage unavailable — the in-memory ref still covers same-tab retry */
+        }
+        setMsgs((m) => ({ ...m, [id]: m[id].slice(0, -1) }));
+        setLoginOpen(true);
+      } else {
+        const reply: Msg = res.ok
+          ? {
+              from: "bot",
+              text: data.answer,
+              categoryName: data.categoryName,
+              viaWeb: data.viaWeb,
+              sources: data.sources,
+            }
+          : {
+              from: "bot",
+              text: `Something went wrong on my desk (${data.error ?? `HTTP ${res.status}`}). Ask again in a moment.`,
+              error: true,
+            };
+        setMsgs((m) => ({ ...m, [id]: [...m[id], reply] }));
+      }
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       setMsgs((m) => ({
@@ -290,6 +351,60 @@ export default function AssistantPage() {
       }));
     } finally {
       setBusyId(null);
+    }
+  }
+
+  // Shared by LoginModal's onSuccess (email login/signup, same tab, no
+  // reload) and the session-transition effect (OAuth redirect-back). The
+  // ref is cleared first so whichever trigger fires second is a no-op —
+  // login success can plausibly fire both in quick succession.
+  function retryPending() {
+    const question = pendingQuestion.current;
+    if (!question) return;
+    const expertId = pendingExpertId.current ?? active ?? undefined;
+    pendingQuestion.current = null;
+    pendingExpertId.current = null;
+    try {
+      sessionStorage.removeItem(PENDING_ASK_KEY);
+    } catch {
+      /* ignore */
+    }
+    setLoginOpen(false);
+    if (expertId && expertId !== active) setActive(expertId);
+    setInput(question);
+    send(question, expertId);
+  }
+
+  // Best-effort import of this anonymous session's per-expert chat threads
+  // into the newly created account, so logging in doesn't discard context.
+  // Only meaningful for the email login/signup path — OAuth fully reloads
+  // the page first, so there's no in-memory `msgs` state left to send.
+  async function importAnonThreads() {
+    if (imported.current) return;
+    imported.current = true;
+    for (const e of EXPERTS) {
+      const thread = msgs[e.id];
+      if (!thread || thread.length <= 1) continue;
+      try {
+        await fetch("/api/conversations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            expertId: e.id,
+            campus,
+            title: thread.find((m) => m.from === "user")?.text ?? e.label,
+            messages: thread.map((m) => ({
+              role: m.from,
+              content: m.text,
+              categoryName: m.categoryName,
+              viaWeb: m.viaWeb,
+              sources: m.sources,
+            })),
+          }),
+        });
+      } catch (err) {
+        console.error("anon thread import failed", err); // best-effort only
+      }
     }
   }
 
@@ -551,7 +666,7 @@ export default function AssistantPage() {
               className="flex-1 min-w-0 font-plex text-[15px] text-[#1a2030] bg-white border-2 border-[#1a2030] rounded-lg px-4 py-3 outline-none focus:border-[#CC0000] focus:shadow-[0_0_0_3px_rgba(204,0,0,0.15)]"
             />
             <button
-              onClick={send}
+              onClick={() => send()}
               disabled={busyId === activeExpert.id || !input.trim()}
               className="flex-none font-pixel text-[10px] text-white bg-[#CC0000] hover:bg-[#e51b1b] disabled:opacity-50 disabled:hover:bg-[#CC0000] border-2 border-[#1a2030] rounded-lg px-4 sm:px-6 cursor-pointer disabled:cursor-default shadow-[0_3px_0_#7a0000] enabled:active:translate-y-[2px] enabled:active:shadow-[0_1px_0_#7a0000]"
             >
@@ -560,6 +675,15 @@ export default function AssistantPage() {
           </div>
         </div>
       )}
+
+      <LoginModal
+        open={loginOpen}
+        onClose={() => setLoginOpen(false)}
+        onSuccess={() => {
+          importAnonThreads();
+          retryPending();
+        }}
+      />
     </div>
   );
 }
