@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: vi.fn() } } }));
 vi.mock("@/lib/db", () => ({
-  db: { select: vi.fn(), insert: vi.fn(), update: vi.fn(), delete: vi.fn() },
+  db: {
+    select: vi.fn(), insert: vi.fn(), update: vi.fn(), delete: vi.fn(),
+    batch: vi.fn().mockResolvedValue(undefined),
+  },
 }));
 
 import { auth } from "@/lib/auth";
@@ -59,6 +62,7 @@ describe("POST /api/conversations (anonymous-history import)", () => {
     vi.mocked(auth.api.getSession).mockResolvedValue({ user: { id: "u1" } } as never);
     const values = vi.fn().mockResolvedValue(undefined);
     vi.mocked(db.insert).mockReturnValue({ values } as never);
+    vi.mocked(db.batch).mockResolvedValue(undefined as never);
 
     const res = await importPOST(
       postReq("http://l/api/conversations", {
@@ -75,6 +79,40 @@ describe("POST /api/conversations (anonymous-history import)", () => {
     expect(res.status).toBe(200);
     expect(data.id).toMatch(/[0-9a-f-]{36}/);
     expect(values).toHaveBeenCalledTimes(3); // conversation + 2 messages
+
+    // conversation insert must use the session's userId, never anything client-supplied
+    // (the request body has no `userId` field at all — see ImportBodySchema).
+    expect(vi.mocked(db.insert).mock.calls[0][0]).toBe(conversations);
+    expect(values.mock.calls[0][0]).toMatchObject({
+      userId: "u1", expertId: "visa", campus: "boston", title: "Do I need a visa?",
+    });
+
+    // message inserts map role/content from the request body, tagged with the same userId.
+    expect(vi.mocked(db.insert).mock.calls[1][0]).toBe(messages);
+    expect(values.mock.calls[1][0]).toMatchObject({
+      userId: "u1", role: "user", content: "Do I need a visa?",
+    });
+    expect(vi.mocked(db.insert).mock.calls[2][0]).toBe(messages);
+    expect(values.mock.calls[2][0]).toMatchObject({
+      userId: "u1", role: "bot", content: "Yes.", categoryName: "Visa", viaWeb: true,
+      sources: [{ title: "x" }],
+    });
+
+    // all inserts are batched together (all-or-nothing), not committed independently.
+    expect(db.batch).toHaveBeenCalledTimes(1);
+  });
+
+  it("400s when expertId is missing", async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue({ user: { id: "u1" } } as never);
+    const res = await importPOST(
+      postReq("http://l/api/conversations", {
+        title: "Do I need a visa?",
+        messages: [],
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBeTruthy();
+    expect(db.insert).not.toHaveBeenCalled();
   });
 });
 
