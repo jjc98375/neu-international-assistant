@@ -26,7 +26,10 @@ vi.mock("@/lib/auth-client", () => ({
     signIn: { social: vi.fn(), email: vi.fn() },
     signUp: { email: vi.fn() },
     signOut: vi.fn().mockResolvedValue(undefined),
-    subscription: { billingPortal: vi.fn().mockResolvedValue(undefined) },
+    subscription: {
+      billingPortal: vi.fn().mockResolvedValue(undefined),
+      upgrade: vi.fn().mockResolvedValue(undefined),
+    },
   },
 }));
 
@@ -42,6 +45,7 @@ describe("AssistantPage — login gate / retry logic", () => {
     vi.mocked(authClient.signUp.email).mockReset();
     vi.mocked(authClient.signOut).mockReset().mockResolvedValue(undefined as never);
     vi.mocked(authClient.subscription.billingPortal).mockReset().mockResolvedValue(undefined as never);
+    vi.mocked(authClient.subscription.upgrade).mockReset().mockResolvedValue(undefined as never);
   });
 
   afterEach(() => {
@@ -530,10 +534,13 @@ describe("AssistantPage — login gate / retry logic", () => {
     expect(screen.queryByText("Old answer.")).toBeNull();
   });
 
-  // Task 8 fix (Important #2): the server includes a `usage` snapshot on a
-  // 429 quota_exceeded response (same shape as the success path) — the
-  // component must still read it, not just on `res.ok`.
-  it("reads `usage` off a 429 quota_exceeded response body without crashing", async () => {
+  // Task 8 fix (Important #2), superseded by Task 10: the server includes a
+  // `usage` snapshot on a 429 quota_exceeded response (same shape as the
+  // success path) — the component must still read it, not just on `res.ok`.
+  // Task 10 additionally wires the 429 path to open the paywall modal
+  // instead of showing a generic error bubble (see the "usage HUD + paywall"
+  // describe block below for the fuller Task 10 coverage of this path).
+  it("reads `usage` off a 429 quota_exceeded response body and opens the paywall instead of an error bubble", async () => {
     mockSession.data = { user: { id: "u1", email: "student@northeastern.edu" } };
     const fetchMock = vi.fn(async (url: string) => {
       if (url === "/api/conversations") {
@@ -556,15 +563,11 @@ describe("AssistantPage — login gate / retry logic", () => {
     fireEvent.change(input, { target: { value: "One more question?" } });
     fireEvent.click(screen.getByText(/SEND/));
 
-    // There is no data-testid or other visible surface exposing `usage` in
-    // the UI yet (Task 10 owns the usage widget) — this test asserts the
-    // reachable floor: reading `data.usage` on a 429 body doesn't crash the
-    // component, the 429 goes through the generic error-bubble path (not the
-    // 401 login-gate path), and the endpoint was hit exactly once. The
-    // `setUsage(data.usage)` call itself is exercised by this same code path
-    // (see the unconditional `if (data?.usage) setUsage(data.usage);` in
-    // send()); it isn't independently observable from the DOM at this stage.
-    await screen.findByText(/Something went wrong on my desk \(quota_exceeded\)/);
+    // Task 10: a 429 opens the paywall modal (its headline interpolates the
+    // usage snapshot the 429 body carried) instead of the generic
+    // error-bubble path, and must not collide with the 401 login-gate path.
+    await screen.findByText(/오늘의 질문을 다 썼어요! \(10\/10\)/);
+    expect(screen.queryByText(/Something went wrong on my desk/)).toBeNull();
     expect(screen.queryByText(/로그인이 필요해요/)).toBeNull();
     const assistantCalls = fetchMock.mock.calls.filter(([url]) => url === "/api/assistant");
     expect(assistantCalls).toHaveLength(1);
@@ -673,6 +676,7 @@ describe("AssistantPage — history drawer (Task 9)", () => {
     vi.mocked(authClient.signUp.email).mockReset();
     vi.mocked(authClient.signOut).mockReset().mockResolvedValue(undefined as never);
     vi.mocked(authClient.subscription.billingPortal).mockReset().mockResolvedValue(undefined as never);
+    vi.mocked(authClient.subscription.upgrade).mockReset().mockResolvedValue(undefined as never);
   });
 
   afterEach(() => {
@@ -879,5 +883,121 @@ describe("AssistantPage — history drawer (Task 9)", () => {
     await screen.findByPlaceholderText(/Ask the visa expert/i);
     // ...and the drawer closed (its own close button is no longer present).
     expect(screen.queryByLabelText("Close chat history")).toBeNull();
+  });
+});
+
+// Task 10: the usage HUD chip, the 429 -> paywall wiring in send(), and the
+// ?upgraded=1 Stripe-checkout-return handling.
+describe("AssistantPage — usage HUD, paywall, and Stripe checkout wiring (Task 10)", () => {
+  beforeEach(() => {
+    mockSession.data = null;
+    sessionStorage.clear();
+    // Tests in this block push their own query string onto the shared jsdom
+    // `window.location` (all tests in this file run against one jsdom
+    // window) — reset to a clean URL before each so state never leaks in.
+    window.history.pushState({}, "", "/assistant");
+    vi.mocked(authClient.signIn.social).mockReset();
+    vi.mocked(authClient.signIn.email).mockReset();
+    vi.mocked(authClient.signUp.email).mockReset();
+    vi.mocked(authClient.signOut).mockReset().mockResolvedValue(undefined as never);
+    vi.mocked(authClient.subscription.billingPortal).mockReset().mockResolvedValue(undefined as never);
+    vi.mocked(authClient.subscription.upgrade).mockReset().mockResolvedValue(undefined as never);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    window.history.pushState({}, "", "/assistant");
+  });
+
+  it("does not render the usage HUD chip when logged out", () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ conversations: [] }) });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AssistantPage />);
+    expect(screen.queryByText(/TODAY \d+\/\d+/)).toBeNull();
+  });
+
+  it("renders the usage HUD chip with used/limit once a send() reports usage, and turns red only once used reaches the limit", async () => {
+    mockSession.data = { user: { id: "u1", email: "student@northeastern.edu" } };
+    let assistantCallCount = 0;
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === "/api/conversations") {
+        return { ok: true, status: 200, json: async () => ({ conversations: [] }) };
+      }
+      assistantCallCount++;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          answer: `Answer ${assistantCallCount}`,
+          categoryName: "Billing",
+          sources: [],
+          // First reply: one below the cap. Second reply: exactly at the cap.
+          usage: assistantCallCount === 1 ? { used: 9, limit: 10, tier: "plus" } : { used: 10, limit: 10, tier: "plus" },
+        }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AssistantPage />);
+    fireEvent.click(screen.getByLabelText(/Chat with the Billing expert/i));
+    const input = await screen.findByPlaceholderText(/Ask the billing expert/i);
+
+    fireEvent.change(input, { target: { value: "Question one" } });
+    fireEvent.click(screen.getByText(/SEND/));
+    await screen.findByText("Answer 1");
+    const belowCap = screen.getByText(/TODAY 9\/10/);
+    // Off-by-one guard: below the cap must not be flagged red.
+    expect(belowCap.className).not.toMatch(/CC0000|ff6b6b/);
+
+    fireEvent.change(input, { target: { value: "Question two" } });
+    fireEvent.click(screen.getByText(/SEND/));
+    await screen.findByText("Answer 2");
+    const atCap = await screen.findByText(/TODAY 10\/10/);
+    // At the cap (used === limit, not used > limit): must be flagged red.
+    expect(atCap.className).toMatch(/ff6b6b/);
+  });
+
+  it("on a 429, opens the paywall (not an error bubble) with the reported usage, and a plan click there requests checkout with the exact successUrl/cancelUrl", async () => {
+    mockSession.data = { user: { id: "u1", email: "student@northeastern.edu" } };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === "/api/conversations") {
+        return { ok: true, status: 200, json: async () => ({ conversations: [] }) };
+      }
+      return {
+        ok: false,
+        status: 429,
+        json: async () => ({ error: "quota_exceeded", usage: { used: 10, limit: 10, tier: "free" } }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AssistantPage />);
+    fireEvent.click(screen.getByLabelText(/Chat with the Billing expert/i));
+    const input = await screen.findByPlaceholderText(/Ask the billing expert/i);
+    fireEvent.change(input, { target: { value: "One more question?" } });
+    fireEvent.click(screen.getByText(/SEND/));
+
+    await screen.findByText(/오늘의 질문을 다 썼어요! \(10\/10\)/);
+    expect(screen.queryByText(/Something went wrong on my desk/)).toBeNull();
+    expect(screen.queryByText(/로그인이 필요해요/)).toBeNull();
+
+    fireEvent.click(screen.getByText(/HUSKY PRO/i));
+    expect(authClient.subscription.upgrade).toHaveBeenCalledWith({
+      plan: "pro",
+      successUrl: "/assistant?upgraded=1",
+      cancelUrl: "/assistant",
+    });
+  });
+
+  it("on load with ?upgraded=1 in the URL, refetches the conversation list, shows an activation toast, and clears the query param", async () => {
+    window.history.pushState({}, "", "/assistant?upgraded=1");
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ conversations: [] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AssistantPage />);
+
+    await screen.findByText("HUSKY PLUS 활성화!");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/conversations"));
+    expect(window.location.search).not.toContain("upgraded");
   });
 });

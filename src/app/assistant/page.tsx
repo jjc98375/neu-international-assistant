@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import { Press_Start_2P, IBM_Plex_Mono } from "next/font/google";
 import { PixelQuad } from "@/components/PixelQuad";
 import { LoginModal } from "@/components/LoginModal";
+import { PaywallModal } from "@/components/PaywallModal";
 import { ChatDrawer, type DrawerConversation } from "@/components/ChatDrawer";
 import type { Category } from "@/lib/rag-categories";
 import { AVAILABLE_CAMPUSES, CAMPUS_KEYS } from "@/lib/campuses";
@@ -252,6 +253,11 @@ export default function AssistantPage() {
   const [campus, setCampus] = useState("boston");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [loginOpen, setLoginOpen] = useState(false);
+  // Opened when send() hits a 429 quota_exceeded response (Task 10).
+  const [paywallOpen, setPaywallOpen] = useState(false);
+  // Small toast-style chip shown briefly after a Stripe checkout redirects
+  // back with ?upgraded=1 — cleared automatically after a few seconds.
+  const [upgradedToast, setUpgradedToast] = useState(false);
   // Active conversation room per expert (undefined = no room yet / anonymous).
   const [conversationIds, setConversationIds] = useState<Record<string, string | undefined>>({});
   // Most recent quota snapshot from /api/assistant — consumed by Task 10's usage UI.
@@ -295,6 +301,23 @@ export default function AssistantPage() {
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get("expert");
     if (id && EXPERTS.some((e) => e.id === id)) setActive(id);
+  }, []);
+
+  // Stripe checkout redirects back to /assistant?upgraded=1 on success (the
+  // successUrl PaywallModal passes to subscription.upgrade). Refetch a probe
+  // to refresh session-derived UI, show a brief "activated" toast chip, and
+  // drop the query param so a refresh doesn't re-trigger this.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("upgraded") !== "1") return;
+    setPaywallOpen(false);
+    setUpgradedToast(true);
+    void loadConversationList();
+    params.delete("upgraded");
+    const rest = params.toString();
+    window.history.replaceState(null, "", rest ? `${window.location.pathname}?${rest}` : window.location.pathname);
+    const timer = setTimeout(() => setUpgradedToast(false), 5000);
+    return () => clearTimeout(timer);
   }, []);
 
   // Rehydrate a gated question across a full-page OAuth redirect: the ref
@@ -407,6 +430,13 @@ export default function AssistantPage() {
         }
         setMsgs((m) => ({ ...m, [id]: m[id].slice(0, -1) }));
         setLoginOpen(true);
+      } else if (res.status === 429) {
+        // Quota exceeded for a logged-in user's tier: no bot reply/error
+        // bubble — the paywall modal explains the cap and offers an upgrade.
+        // The user's question bubble is left as-is (unlike the anonymous 401
+        // gate above, there's no pending-question auto-retry once they
+        // upgrade — successUrl just redirects back to /assistant?upgraded=1).
+        setPaywallOpen(true);
       } else {
         const reply: Msg = res.ok
           ? {
@@ -696,6 +726,26 @@ export default function AssistantPage() {
             <span className="font-pixel text-[7px] text-[#f8f6f2]">▤ MY CHATS</span>
           </button>
         )}
+        {session && usage && (
+          <div
+            className={`pointer-events-auto flex items-center bg-[rgba(16,21,36,0.9)] border-2 rounded-[10px] px-3.5 py-2.5 ${
+              usage.used >= usage.limit ? "border-[#CC0000]" : "border-[#2b3450]"
+            }`}
+          >
+            <span
+              className={`font-pixel text-[7px] ${
+                usage.used >= usage.limit ? "text-[#ff6b6b]" : "text-[#8b93a5]"
+              }`}
+            >
+              TODAY {usage.used}/{usage.limit} ▮
+            </span>
+          </div>
+        )}
+        {upgradedToast && (
+          <div className="pointer-events-auto bg-[rgba(16,21,36,0.9)] border-2 border-[#FFD23F] rounded-[10px] px-3.5 py-2.5">
+            <span className="font-pixel text-[7px] text-[#FFD23F]">HUSKY PLUS 활성화!</span>
+          </div>
+        )}
         {!active && (
           <div className="ml-auto bg-[rgba(16,21,36,0.9)] border-2 border-[#FFD23F] rounded-full px-3.5 py-2.5">
             <span className="font-pixel text-[7px] text-[#FFD23F]">▼ CLICK AN EXPERT ON THE QUAD</span>
@@ -949,6 +999,8 @@ export default function AssistantPage() {
           retryPending();
         }}
       />
+
+      <PaywallModal open={paywallOpen} onClose={() => setPaywallOpen(false)} usage={usage} />
 
       <ChatDrawer
         open={drawerOpen}
