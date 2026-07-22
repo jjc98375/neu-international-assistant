@@ -218,6 +218,26 @@ interface Msg {
   error?: boolean;
 }
 
+// Shapes returned by the conversation-history endpoints (Task 6/9's API
+// surface) — kept minimal/local to this file since nothing else consumes them.
+interface ConversationSummary {
+  id: string;
+  expertId: string;
+  campus?: string | null;
+  title: string;
+  pinned: boolean;
+  updatedAt: string;
+}
+
+interface StoredMessage {
+  role: string;
+  content: string;
+  categoryName?: string | null;
+  viaWeb?: boolean | null;
+  sources?: unknown;
+  createdAt?: string;
+}
+
 function initialMsgs(): Record<string, Msg[]> {
   return Object.fromEntries(EXPERTS.map((e) => [e.id, [{ from: "bot", text: e.greeting }]]));
 }
@@ -230,12 +250,19 @@ export default function AssistantPage() {
   const [campus, setCampus] = useState("boston");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [loginOpen, setLoginOpen] = useState(false);
+  // Active conversation room per expert (undefined = no room yet / anonymous).
+  const [conversationIds, setConversationIds] = useState<Record<string, string | undefined>>({});
+  // Most recent quota snapshot from /api/assistant — consumed by Task 10's usage UI.
+  const [usage, setUsage] = useState<{ used: number; limit: number; tier: string } | null>(null);
   const chatRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const pendingQuestion = useRef<string | null>(null);
   const pendingExpertId = useRef<string | null>(null);
   const imported = useRef(false);
   const prevSession = useRef<unknown>(null);
+  // Tracks which experts' room messages have already been fetched from the
+  // server this page-life, so opening the same expert twice doesn't refetch.
+  const loadedMessages = useRef<Set<string>>(new Set());
 
   const { data: session } = authClient.useSession();
 
@@ -269,10 +296,28 @@ export default function AssistantPage() {
   // Auto-retry a gated question once the session goes from logged-out to
   // logged-in (email login/signup calls this directly via onSuccess too;
   // retryPending() no-ops the second time since it clears the ref first).
+  // This same null->truthy transition also covers a plain page refresh while
+  // already logged in (the session hook starts null until it resolves), so
+  // it doubles as the hook point for resuming each expert's most recent room.
   useEffect(() => {
-    if (!prevSession.current && session) retryPending();
+    if (!prevSession.current && session) {
+      retryPending();
+      void loadConversationList();
+    }
     prevSession.current = session;
   }, [session]);
+
+  // Lazily fetch a room's messages the first time its expert is opened (not
+  // on every click): runs whenever the active expert or its known
+  // conversationId changes, but the loadedMessages guard makes the actual
+  // fetch fire at most once per expertId per page-life.
+  useEffect(() => {
+    if (!active) return;
+    const convoId = conversationIds[active];
+    if (!convoId || loadedMessages.current.has(active)) return;
+    loadedMessages.current.add(active);
+    void loadConversationMessages(active, convoId);
+  }, [active, conversationIds]);
 
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
@@ -309,7 +354,13 @@ export default function AssistantPage() {
       const res = await fetch("/api/assistant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, category: expert.category, campus }),
+        body: JSON.stringify({
+          question,
+          category: expert.category,
+          campus,
+          conversationId: conversationIds[id],
+          expertId: id,
+        }),
       });
       const data = await res.json();
 
@@ -342,6 +393,18 @@ export default function AssistantPage() {
               error: true,
             };
         setMsgs((m) => ({ ...m, [id]: [...m[id], reply] }));
+        if (res.ok) {
+          if (data.conversationId) {
+            setConversationIds((m) => ({ ...m, [id]: data.conversationId }));
+            // This expert's room now definitely reflects the freshest server
+            // state (we just appended to it), so mark it "loaded" — otherwise
+            // the lazy-load effect above would see conversationIds[id] flip
+            // from undefined to a real id and immediately refetch, redundantly
+            // overwriting the message we just rendered optimistically.
+            loadedMessages.current.add(id);
+          }
+          if (data.usage) setUsage(data.usage);
+        }
       }
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
@@ -373,6 +436,70 @@ export default function AssistantPage() {
     if (expertId && expertId !== active) setActive(expertId);
     setInput(question);
     send(question, expertId);
+  }
+
+  // Fetches this user's conversation rooms and, for each expert, remembers
+  // the single most recent one (by updatedAt, independent of pinned — pin
+  // ordering is a display concern for Task 9's drawer, not for which room
+  // auto-resumes). Never clobbers a conversationId already known locally
+  // (e.g. one just created by a send() that raced this same fetch).
+  async function loadConversationList() {
+    try {
+      const res = await fetch("/api/conversations");
+      if (!res.ok) return;
+      const data = await res.json();
+      const list: ConversationSummary[] = data.conversations ?? [];
+      const mostRecent: Record<string, ConversationSummary> = {};
+      for (const c of list) {
+        const prev = mostRecent[c.expertId];
+        if (!prev || new Date(c.updatedAt).getTime() > new Date(prev.updatedAt).getTime()) {
+          mostRecent[c.expertId] = c;
+        }
+      }
+      setConversationIds((m) => {
+        const next = { ...m };
+        for (const [expertId, convo] of Object.entries(mostRecent)) {
+          if (!next[expertId]) next[expertId] = convo.id;
+        }
+        return next;
+      });
+    } catch (err) {
+      console.error("failed to load conversation list", err); // best-effort only
+    }
+  }
+
+  // Loads a room's messages and replaces the expert's visible thread with
+  // [greeting, ...serverMessages]. Called by the lazy-load effect and by
+  // openConversation() below.
+  async function loadConversationMessages(expertId: string, conversationId: string) {
+    try {
+      const res = await fetch(`/api/conversations/${conversationId}/messages`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const stored: StoredMessage[] = data.messages ?? [];
+      const expert = EXPERTS.find((e) => e.id === expertId);
+      const greeting: Msg = { from: "bot", text: expert?.greeting ?? "" };
+      const loaded: Msg[] = stored.map((m) => ({
+        from: m.role === "user" ? "user" : "bot",
+        text: m.content,
+        categoryName: m.categoryName ?? undefined,
+        viaWeb: m.viaWeb ?? undefined,
+        sources: (m.sources as Msg["sources"]) ?? undefined,
+      }));
+      setMsgs((prev) => ({ ...prev, [expertId]: [greeting, ...loaded] }));
+    } catch (err) {
+      console.error("failed to load conversation messages", err); // best-effort only
+    }
+  }
+
+  // Called by Task 9's history drawer when the user picks a past room:
+  // switches the active expert to it, points that expert at the chosen
+  // conversation, and (by clearing the loaded-guard first) lets the lazy-load
+  // effect above fetch and render its messages, then opens the popup.
+  function openConversation(convo: { id: string; expertId: string }) {
+    loadedMessages.current.delete(convo.expertId);
+    setConversationIds((m) => ({ ...m, [convo.expertId]: convo.id }));
+    setActive(convo.expertId);
   }
 
   // Best-effort import of this anonymous session's per-expert chat threads
@@ -528,7 +655,17 @@ export default function AssistantPage() {
                 <span className="font-pixel text-[6px] text-[#8b93a5]">ONLINE · ON THE QUAD</span>
               </div>
             </div>
-            <div className="ml-auto">
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setConversationIds((m) => ({ ...m, [activeExpert.id]: undefined }));
+                  setMsgs((m) => ({ ...m, [activeExpert.id]: [{ from: "bot", text: activeExpert.greeting }] }));
+                  loadedMessages.current.delete(activeExpert.id);
+                }}
+                className="font-pixel text-[7px] text-[#f8f6f2] bg-[#232b42] hover:bg-[#2b3450] border-2 border-[#2b3450] hover:border-[#3d4a6b] rounded-lg px-3 py-2.5 cursor-pointer whitespace-nowrap"
+              >
+                + NEW
+              </button>
               <CampusPicker value={campus} onChange={setCampus} compact />
             </div>
             <button
