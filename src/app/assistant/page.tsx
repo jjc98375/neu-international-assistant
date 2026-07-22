@@ -263,6 +263,22 @@ export default function AssistantPage() {
   // Tracks which experts' room messages have already been fetched from the
   // server this page-life, so opening the same expert twice doesn't refetch.
   const loadedMessages = useRef<Set<string>>(new Set());
+  // Per-expert generation counter, bumped whenever that expert's `msgs`
+  // array is reset (an optimistic send, or "+ NEW"). loadConversationMessages
+  // captures the epoch at fetch-start and, on resolve, only applies its
+  // full-array overwrite if the epoch is still the same — otherwise a new
+  // send (or a reset) happened *during* the load's flight and the stale
+  // historical snapshot must not clobber it.
+  const msgsEpoch = useRef<Record<string, number>>({});
+  // Live mirror of `busyId` (a plain ref, not state, so it's readable from
+  // inside an already-suspended async function without a stale closure).
+  // Covers the complementary race the epoch check above can't see: a send()
+  // that started *before* the historical load and is still unresolved when
+  // the load resolves. In that case the epoch was already bumped before the
+  // load's fetch even started, so "unchanged since fetch-start" alone won't
+  // catch it — checking "is this expert's send still in flight right now"
+  // does.
+  const busyIdRef = useRef<string | null>(null);
 
   const { data: session } = authClient.useSession();
 
@@ -347,8 +363,10 @@ export default function AssistantPage() {
     const id = expert.id;
 
     setMsgs((m) => ({ ...m, [id]: [...m[id], { from: "user", text: question }] }));
+    msgsEpoch.current[id] = (msgsEpoch.current[id] ?? 0) + 1;
     setInput("");
     setBusyId(id);
+    busyIdRef.current = id;
 
     try {
       const res = await fetch("/api/assistant", {
@@ -363,6 +381,10 @@ export default function AssistantPage() {
         }),
       });
       const data = await res.json();
+      // The server includes a `usage` snapshot on both success and 429
+      // (quota_exceeded) responses — read it unconditionally so the UI
+      // reflects the latest count even on a rejected request.
+      if (data?.usage) setUsage(data.usage);
 
       if (res.status === 401 && data?.gate) {
         // Server says an anonymous quota is exhausted: drop the optimistic
@@ -403,7 +425,6 @@ export default function AssistantPage() {
             // overwriting the message we just rendered optimistically.
             loadedMessages.current.add(id);
           }
-          if (data.usage) setUsage(data.usage);
         }
       }
     } catch (err) {
@@ -414,6 +435,7 @@ export default function AssistantPage() {
       }));
     } finally {
       setBusyId(null);
+      if (busyIdRef.current === id) busyIdRef.current = null;
     }
   }
 
@@ -472,6 +494,11 @@ export default function AssistantPage() {
   // [greeting, ...serverMessages]. Called by the lazy-load effect and by
   // openConversation() below.
   async function loadConversationMessages(expertId: string, conversationId: string) {
+    // Snapshot this expert's generation before the request goes out. If a
+    // send() (or "+ NEW") bumps it before this resolves, the thread has
+    // moved on and this historical snapshot is stale — applying it now
+    // would clobber newer, in-flight local state.
+    const epochAtStart = msgsEpoch.current[expertId] ?? 0;
     try {
       const res = await fetch(`/api/conversations/${conversationId}/messages`);
       if (!res.ok) return;
@@ -486,6 +513,12 @@ export default function AssistantPage() {
         viaWeb: m.viaWeb ?? undefined,
         sources: (m.sources as Msg["sources"]) ?? undefined,
       }));
+      // Bail if either: (a) a send/reset bumped the epoch during our flight
+      // (a new send that started and possibly finished while we were in the
+      // air), or (b) a send for this expert that started *before* us is
+      // still unresolved right now (its epoch bump predates our own start,
+      // so (a) can't see it — busyIdRef, read live, can).
+      if ((msgsEpoch.current[expertId] ?? 0) !== epochAtStart || busyIdRef.current === expertId) return;
       setMsgs((prev) => ({ ...prev, [expertId]: [greeting, ...loaded] }));
     } catch (err) {
       console.error("failed to load conversation messages", err); // best-effort only
@@ -513,7 +546,7 @@ export default function AssistantPage() {
       const thread = msgs[e.id];
       if (!thread || thread.length <= 1) continue;
       try {
-        await fetch("/api/conversations", {
+        const res = await fetch("/api/conversations", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -529,6 +562,14 @@ export default function AssistantPage() {
             })),
           }),
         });
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.id) {
+            const expertId = e.id;
+            const { id } = data;
+            setConversationIds((m) => ({ ...m, [expertId]: id }));
+          }
+        }
       } catch (err) {
         console.error("anon thread import failed", err); // best-effort only
       }
@@ -661,6 +702,7 @@ export default function AssistantPage() {
                   setConversationIds((m) => ({ ...m, [activeExpert.id]: undefined }));
                   setMsgs((m) => ({ ...m, [activeExpert.id]: [{ from: "bot", text: activeExpert.greeting }] }));
                   loadedMessages.current.delete(activeExpert.id);
+                  msgsEpoch.current[activeExpert.id] = (msgsEpoch.current[activeExpert.id] ?? 0) + 1;
                 }}
                 className="font-pixel text-[7px] text-[#f8f6f2] bg-[#232b42] hover:bg-[#2b3450] border-2 border-[#2b3450] hover:border-[#3d4a6b] rounded-lg px-3 py-2.5 cursor-pointer whitespace-nowrap"
               >

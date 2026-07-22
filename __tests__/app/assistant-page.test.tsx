@@ -258,4 +258,256 @@ describe("AssistantPage — login gate / retry logic", () => {
     expect(secondBody).not.toHaveProperty("conversationId");
     expect(secondBody.question).toBe("Second question");
   });
+
+  // Task 8 fix (Critical): a late-resolving historical-conversation load must
+  // not clobber a message that's already in flight for the same expert.
+  it("does not let a late historical-conversation load clobber a retried in-flight message", async () => {
+    let assistantCallCount = 0;
+    let releaseRetryResponse: () => void = () => {};
+    const retryGate = new Promise<void>((resolve) => {
+      releaseRetryResponse = resolve;
+    });
+    let resolveMessagesFetched: () => void = () => {};
+    const messagesFetched = new Promise<void>((resolve) => {
+      resolveMessagesFetched = resolve;
+    });
+
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (url === "/api/conversations") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            conversations: [
+              {
+                id: "conv-billing",
+                expertId: "billing",
+                campus: "boston",
+                title: "Old room",
+                pinned: false,
+                updatedAt: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+          }),
+        };
+      }
+      if (url === "/api/conversations/conv-billing/messages") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => {
+            const body = {
+              messages: [
+                { role: "user", content: "Old question", createdAt: "2026-01-01T00:00:01.000Z" },
+                {
+                  role: "bot",
+                  content: "Old answer.",
+                  categoryName: "Billing",
+                  viaWeb: false,
+                  sources: [],
+                  createdAt: "2026-01-01T00:00:02.000Z",
+                },
+              ],
+            };
+            // Signal (after this microtask, i.e. once the component has the
+            // parsed body in hand and is about to decide whether to apply
+            // it) that the historical load has resolved.
+            resolveMessagesFetched();
+            return body;
+          },
+        };
+      }
+      assistantCallCount++;
+      if (assistantCallCount === 1) {
+        return { ok: false, status: 401, json: async () => ({ error: "login_required", gate: true }) };
+      }
+      // The retried POST — deliberately held open until the test releases
+      // it, so the historical-conversation GETs above resolve first.
+      await retryGate;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          answer: "Your hold has been cleared.",
+          categoryName: "Billing",
+          sources: [],
+          conversationId: "conv-billing",
+        }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    vi.mocked(authClient.signIn.email).mockImplementation(async () => {
+      mockSession.data = { user: { id: "u1", email: "student@northeastern.edu" } };
+      return { data: {}, error: null } as never;
+    });
+
+    render(<AssistantPage />);
+
+    fireEvent.click(screen.getByLabelText(/Chat with the Billing expert/i));
+    const input = await screen.findByPlaceholderText(/Ask the billing expert/i);
+    const question = "Why is my account on hold?";
+    fireEvent.change(input, { target: { value: question } });
+    fireEvent.click(screen.getByText(/SEND/));
+
+    await screen.findByText(/로그인이 필요해요/);
+
+    fireEvent.change(screen.getByPlaceholderText(/^Email$/i), {
+      target: { value: "student@northeastern.edu" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/^Password$/i), {
+      target: { value: "hunter2" },
+    });
+    fireEvent.click(screen.getByText("로그인"));
+
+    // Let the historical-conversation load (triggered by the login
+    // transition's loadConversationList -> lazy-load effect) resolve and get
+    // processed before releasing the retried POST.
+    await messagesFetched;
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Core regression assertion: the retried question's optimistic bubble
+    // must have survived — the historical load resolving first must not
+    // have overwritten it. (Unfixed code renders "Old answer." here, having
+    // wiped the bubble; the fix must render neither the stale history nor
+    // lose the in-flight question.)
+    screen.getByText(question); // throws if not rendered
+    expect(screen.queryByText("Old answer.")).toBeNull();
+
+    releaseRetryResponse();
+    await screen.findByText("Your hold has been cleared.");
+
+    // Still present after the retried POST's reply is appended.
+    screen.getByText(question); // throws if not rendered
+  });
+
+  // Task 8 fix (Important #2): the server includes a `usage` snapshot on a
+  // 429 quota_exceeded response (same shape as the success path) — the
+  // component must still read it, not just on `res.ok`.
+  it("reads `usage` off a 429 quota_exceeded response body without crashing", async () => {
+    mockSession.data = { user: { id: "u1", email: "student@northeastern.edu" } };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === "/api/conversations") {
+        return { ok: true, status: 200, json: async () => ({ conversations: [] }) };
+      }
+      return {
+        ok: false,
+        status: 429,
+        json: async () => ({
+          error: "quota_exceeded",
+          usage: { used: 10, limit: 10, tier: "free" },
+        }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AssistantPage />);
+    fireEvent.click(screen.getByLabelText(/Chat with the Billing expert/i));
+    const input = await screen.findByPlaceholderText(/Ask the billing expert/i);
+    fireEvent.change(input, { target: { value: "One more question?" } });
+    fireEvent.click(screen.getByText(/SEND/));
+
+    // There is no data-testid or other visible surface exposing `usage` in
+    // the UI yet (Task 10 owns the usage widget) — this test asserts the
+    // reachable floor: reading `data.usage` on a 429 body doesn't crash the
+    // component, the 429 goes through the generic error-bubble path (not the
+    // 401 login-gate path), and the endpoint was hit exactly once. The
+    // `setUsage(data.usage)` call itself is exercised by this same code path
+    // (see the unconditional `if (data?.usage) setUsage(data.usage);` in
+    // send()); it isn't independently observable from the DOM at this stage.
+    await screen.findByText(/Something went wrong on my desk \(quota_exceeded\)/);
+    expect(screen.queryByText(/로그인이 필요해요/)).toBeNull();
+    const assistantCalls = fetchMock.mock.calls.filter(([url]) => url === "/api/assistant");
+    expect(assistantCalls).toHaveLength(1);
+  });
+
+  // Task 8 fix (Important #3): importAnonThreads() must feed the id it gets
+  // back from POST /api/conversations into conversationIds, so the next
+  // send() for that expert continues the just-imported room server-side.
+  it("wires the id returned by importAnonThreads()'s POST into conversationIds for that expert's next send()", async () => {
+    const assistantCallCounts: Record<string, number> = {};
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/conversations" && (!init || !init.method || init.method === "GET")) {
+        return { ok: true, status: 200, json: async () => ({ conversations: [] }) };
+      }
+      if (url === "/api/conversations" && init?.method === "POST") {
+        const body = JSON.parse(init.body as string);
+        return { ok: true, status: 200, json: async () => ({ id: `conv-imported-${body.expertId}` }) };
+      }
+      if (/^\/api\/conversations\/.+\/messages$/.test(url)) {
+        return { ok: true, status: 200, json: async () => ({ messages: [] }) };
+      }
+      if (url === "/api/assistant") {
+        const body = JSON.parse(init!.body as string);
+        assistantCallCounts[body.expertId] = (assistantCallCounts[body.expertId] ?? 0) + 1;
+        if (body.expertId === "billing" && assistantCallCounts.billing === 1) {
+          return { ok: false, status: 401, json: async () => ({ error: "login_required", gate: true }) };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            answer: `Answer for ${body.expertId} #${assistantCallCounts[body.expertId]}`,
+            categoryName: "Billing",
+            sources: [],
+          }),
+        };
+      }
+      throw new Error(`unexpected fetch in this test: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    vi.mocked(authClient.signIn.email).mockImplementation(async () => {
+      mockSession.data = { user: { id: "u1", email: "student@northeastern.edu" } };
+      return { data: {}, error: null } as never;
+    });
+
+    render(<AssistantPage />);
+
+    // Build up an anonymous thread on the visa expert that's eligible for
+    // import (length > 1: greeting + question + answer).
+    fireEvent.click(screen.getByLabelText(/Chat with the Visa expert/i));
+    let input = await screen.findByPlaceholderText(/Ask the visa expert/i);
+    fireEvent.change(input, { target: { value: "Visa question one" } });
+    fireEvent.click(screen.getByText(/SEND/));
+    await screen.findByText(/Answer for visa #1/);
+
+    // Gate a billing question so the login modal opens (its own thread gets
+    // sliced back to length 1 by the gate, so it's not itself imported).
+    fireEvent.click(screen.getByLabelText(/Chat with the Billing expert/i));
+    input = await screen.findByPlaceholderText(/Ask the billing expert/i);
+    fireEvent.change(input, { target: { value: "Billing question" } });
+    fireEvent.click(screen.getByText(/SEND/));
+    await screen.findByText(/로그인이 필요해요/);
+
+    fireEvent.change(screen.getByPlaceholderText(/^Email$/i), {
+      target: { value: "student@northeastern.edu" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/^Password$/i), {
+      target: { value: "hunter2" },
+    });
+    fireEvent.click(screen.getByText("로그인"));
+
+    // Login success fires importAnonThreads() (imports the visa thread) and
+    // retryPending() (retries the billing question) — wait for the retry's
+    // reply as a signal the whole login sequence has settled.
+    await screen.findByText(/Answer for billing #2/);
+
+    // Switch back to visa and send a follow-up: its conversationId should
+    // now be the id importAnonThreads() got back from the server, not absent.
+    fireEvent.click(screen.getByLabelText(/Chat with the Visa expert/i));
+    input = await screen.findByPlaceholderText(/Ask the visa expert/i);
+    fireEvent.change(input, { target: { value: "Visa question two" } });
+    fireEvent.click(screen.getByText(/SEND/));
+    await screen.findByText(/Answer for visa #2/);
+
+    const visaCalls = fetchMock.mock.calls.filter(([url, init]) => {
+      if (url !== "/api/assistant" || !(init as RequestInit)?.body) return false;
+      const body = JSON.parse((init as RequestInit).body as string);
+      return body.expertId === "visa";
+    });
+    expect(visaCalls).toHaveLength(2);
+    const secondVisaBody = JSON.parse((visaCalls[1]![1] as RequestInit).body as string);
+    expect(secondVisaBody.conversationId).toBe("conv-imported-visa");
+  });
 });
