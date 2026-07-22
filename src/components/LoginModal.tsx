@@ -64,8 +64,18 @@ export function LoginModal({
     }
   }
 
-  function social(provider: "google" | "microsoft") {
-    authClient.signIn.social({ provider, callbackURL: "/assistant" });
+  async function social(provider: "google" | "microsoft") {
+    if (busy) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await authClient.signIn.social({ provider, callbackURL: "/assistant" });
+      if (res.error) setError(res.error.message ?? "로그인에 실패했어요. 다시 시도해 주세요.");
+      // On success, better-auth performs its own full-page OAuth redirect —
+      // nothing further to do here.
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
