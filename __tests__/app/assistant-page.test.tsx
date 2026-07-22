@@ -25,6 +25,8 @@ vi.mock("@/lib/auth-client", () => ({
     useSession: () => mockSession,
     signIn: { social: vi.fn(), email: vi.fn() },
     signUp: { email: vi.fn() },
+    signOut: vi.fn().mockResolvedValue(undefined),
+    subscription: { billingPortal: vi.fn().mockResolvedValue(undefined) },
   },
 }));
 
@@ -38,6 +40,8 @@ describe("AssistantPage — login gate / retry logic", () => {
     vi.mocked(authClient.signIn.social).mockReset();
     vi.mocked(authClient.signIn.email).mockReset();
     vi.mocked(authClient.signUp.email).mockReset();
+    vi.mocked(authClient.signOut).mockReset().mockResolvedValue(undefined as never);
+    vi.mocked(authClient.subscription.billingPortal).mockReset().mockResolvedValue(undefined as never);
   });
 
   afterEach(() => {
@@ -654,5 +658,226 @@ describe("AssistantPage — login gate / retry logic", () => {
     expect(visaCalls).toHaveLength(2);
     const secondVisaBody = JSON.parse((visaCalls[1]![1] as RequestInit).body as string);
     expect(secondVisaBody.conversationId).toBe("conv-imported-visa");
+  });
+});
+
+// Task 9: the "▤ MY CHATS" history drawer — chip visibility, the
+// sortConversations wiring between the fetched list and the drawer, and the
+// pin/delete/open handlers' REST calls and optimistic-UI reconciliation.
+describe("AssistantPage — history drawer (Task 9)", () => {
+  beforeEach(() => {
+    mockSession.data = null;
+    sessionStorage.clear();
+    vi.mocked(authClient.signIn.social).mockReset();
+    vi.mocked(authClient.signIn.email).mockReset();
+    vi.mocked(authClient.signUp.email).mockReset();
+    vi.mocked(authClient.signOut).mockReset().mockResolvedValue(undefined as never);
+    vi.mocked(authClient.subscription.billingPortal).mockReset().mockResolvedValue(undefined as never);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("only renders the ▤ MY CHATS chip when logged in", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ conversations: [] }) });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AssistantPage />);
+    expect(screen.queryByText("▤ MY CHATS")).toBeNull();
+  });
+
+  it("sorts pinned conversations before more-recent unpinned ones in the drawer (sortConversations wiring)", async () => {
+    mockSession.data = { user: { id: "u1", email: "student@northeastern.edu" } };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === "/api/conversations") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            conversations: [
+              // Server order deliberately puts the newer, unpinned room first —
+              // if the drawer just rendered fetch order verbatim (skipping
+              // sortConversations) this test would fail.
+              {
+                id: "unpinned-recent", expertId: "billing", campus: "boston",
+                title: "Unpinned but newer", pinned: false, updatedAt: "2026-07-20T00:00:00.000Z",
+              },
+              {
+                id: "pinned-older", expertId: "visa", campus: "boston",
+                title: "Pinned but older", pinned: true, updatedAt: "2026-07-01T00:00:00.000Z",
+              },
+            ],
+          }),
+        };
+      }
+      throw new Error(`unexpected fetch in this test: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AssistantPage />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/conversations"));
+
+    fireEvent.click(screen.getByText("▤ MY CHATS"));
+    await screen.findByText("Unpinned but newer");
+
+    const titles = screen.getAllByText(/^(Unpinned but newer|Pinned but older)$/).map((el) => el.textContent);
+    expect(titles.indexOf("Pinned but older")).toBeLessThan(titles.indexOf("Unpinned but newer"));
+  });
+
+  it("clicking pin in the drawer PATCHes /api/conversations/:id with the toggled pinned value", async () => {
+    mockSession.data = { user: { id: "u1", email: "student@northeastern.edu" } };
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/conversations" && (!init || !init.method || init.method === "GET")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            conversations: [
+              {
+                id: "conv-1", expertId: "billing", campus: "boston",
+                title: "Why is my account on hold?", pinned: false, updatedAt: "2026-07-01T00:00:00.000Z",
+              },
+            ],
+          }),
+        };
+      }
+      if (url === "/api/conversations/conv-1" && init?.method === "PATCH") {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      throw new Error(`unexpected fetch in this test: ${url} ${init?.method}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AssistantPage />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/conversations"));
+    fireEvent.click(screen.getByText("▤ MY CHATS"));
+    await screen.findByText("Why is my account on hold?");
+
+    fireEvent.click(screen.getByLabelText("Pin conversation"));
+
+    await waitFor(() => {
+      const patchCall = fetchMock.mock.calls.find(
+        ([u, i]) => u === "/api/conversations/conv-1" && (i as RequestInit | undefined)?.method === "PATCH",
+      );
+      expect(patchCall).toBeTruthy();
+      expect(JSON.parse((patchCall![1] as RequestInit).body as string)).toEqual({ pinned: true });
+    });
+  });
+
+  it("reconciles the drawer via a refetch when a pin PATCH fails", async () => {
+    mockSession.data = { user: { id: "u1", email: "student@northeastern.edu" } };
+    let listCallCount = 0;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/conversations" && (!init || !init.method || init.method === "GET")) {
+        listCallCount++;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            conversations: [
+              {
+                id: "conv-1", expertId: "billing", campus: "boston",
+                title: "Why is my account on hold?", pinned: false, updatedAt: "2026-07-01T00:00:00.000Z",
+              },
+            ],
+          }),
+        };
+      }
+      if (url === "/api/conversations/conv-1" && init?.method === "PATCH") {
+        return { ok: false, status: 404, json: async () => ({ error: "not_found" }) };
+      }
+      throw new Error(`unexpected fetch in this test: ${url} ${init?.method}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AssistantPage />);
+    await waitFor(() => expect(listCallCount).toBe(1));
+    fireEvent.click(screen.getByText("▤ MY CHATS"));
+    await screen.findByText("Why is my account on hold?");
+
+    fireEvent.click(screen.getByLabelText("Pin conversation"));
+
+    // A failed PATCH must not leave the drawer silently diverged from the
+    // server — it refetches the authoritative list instead.
+    await waitFor(() => expect(listCallCount).toBe(2));
+  });
+
+  it("delete in the drawer requires a second confirming click before DELETE fires", async () => {
+    mockSession.data = { user: { id: "u1", email: "student@northeastern.edu" } };
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/conversations" && (!init || !init.method || init.method === "GET")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            conversations: [
+              {
+                id: "conv-1", expertId: "billing", campus: "boston",
+                title: "Why is my account on hold?", pinned: false, updatedAt: "2026-07-01T00:00:00.000Z",
+              },
+            ],
+          }),
+        };
+      }
+      if (url === "/api/conversations/conv-1" && init?.method === "DELETE") {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      throw new Error(`unexpected fetch in this test: ${url} ${init?.method}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AssistantPage />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/conversations"));
+    fireEvent.click(screen.getByText("▤ MY CHATS"));
+    await screen.findByText("Why is my account on hold?");
+
+    fireEvent.click(screen.getByLabelText("Delete conversation"));
+    const deleteCallsBeforeConfirm = fetchMock.mock.calls.filter(
+      ([u, i]) => u === "/api/conversations/conv-1" && (i as RequestInit | undefined)?.method === "DELETE",
+    );
+    expect(deleteCallsBeforeConfirm).toHaveLength(0);
+
+    fireEvent.click(screen.getByText("정말 삭제?"));
+    await waitFor(() => {
+      const deleteCalls = fetchMock.mock.calls.filter(
+        ([u, i]) => u === "/api/conversations/conv-1" && (i as RequestInit | undefined)?.method === "DELETE",
+      );
+      expect(deleteCalls).toHaveLength(1);
+    });
+  });
+
+  it("clicking a conversation row resumes that room (opens the matching expert's chat popup) and closes the drawer", async () => {
+    mockSession.data = { user: { id: "u1", email: "student@northeastern.edu" } };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === "/api/conversations") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            conversations: [
+              {
+                id: "conv-visa-1", expertId: "visa", campus: "boston",
+                title: "Do I need a new I-20?", pinned: false, updatedAt: "2026-07-01T00:00:00.000Z",
+              },
+            ],
+          }),
+        };
+      }
+      if (url === "/api/conversations/conv-visa-1/messages") {
+        return { ok: true, status: 200, json: async () => ({ messages: [] }) };
+      }
+      throw new Error(`unexpected fetch in this test: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AssistantPage />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/conversations"));
+    fireEvent.click(screen.getByText("▤ MY CHATS"));
+    fireEvent.click(await screen.findByText("Do I need a new I-20?"));
+
+    // The visa expert's chat popup opened for the resumed room...
+    await screen.findByPlaceholderText(/Ask the visa expert/i);
+    // ...and the drawer closed (its own close button is no longer present).
+    expect(screen.queryByLabelText("Close chat history")).toBeNull();
   });
 });

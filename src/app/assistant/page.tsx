@@ -5,9 +5,11 @@ import ReactMarkdown from "react-markdown";
 import { Press_Start_2P, IBM_Plex_Mono } from "next/font/google";
 import { PixelQuad } from "@/components/PixelQuad";
 import { LoginModal } from "@/components/LoginModal";
+import { ChatDrawer, type DrawerConversation } from "@/components/ChatDrawer";
 import type { Category } from "@/lib/rag-categories";
 import { AVAILABLE_CAMPUSES, CAMPUS_KEYS } from "@/lib/campuses";
 import { authClient } from "@/lib/auth-client";
+import { sortConversations } from "@/lib/sort-conversations";
 
 // sessionStorage key: carries {expertId, question} across a full-page OAuth
 // redirect so the gated question can still be auto-resent on return.
@@ -254,6 +256,11 @@ export default function AssistantPage() {
   const [conversationIds, setConversationIds] = useState<Record<string, string | undefined>>({});
   // Most recent quota snapshot from /api/assistant — consumed by Task 10's usage UI.
   const [usage, setUsage] = useState<{ used: number; limit: number; tier: string } | null>(null);
+  // Full conversation-history list (Task 9's drawer) — distinct from
+  // conversationIds above, which only tracks each expert's single most-recent
+  // room for auto-resume. Fetched on login, refetched after pin/delete.
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const pendingQuestion = useRef<string | null>(null);
@@ -473,6 +480,7 @@ export default function AssistantPage() {
       if (!res.ok) return;
       const data = await res.json();
       const list: ConversationSummary[] = data.conversations ?? [];
+      setConversations(list);
       const mostRecent: Record<string, ConversationSummary> = {};
       for (const c of list) {
         const prev = mostRecent[c.expertId];
@@ -535,6 +543,73 @@ export default function AssistantPage() {
     loadedMessages.current.delete(convo.expertId);
     setConversationIds((m) => ({ ...m, [convo.expertId]: convo.id }));
     setActive(convo.expertId);
+  }
+
+  // Task 9's drawer row click: resume that room and tuck the drawer away so
+  // the chat popup it opens isn't left hidden behind it.
+  function handleOpenConversation(convo: DrawerConversation) {
+    openConversation(convo);
+    setDrawerOpen(false);
+  }
+
+  // Optimistic pin/unpin: flips the row immediately (the drawer's whole
+  // point is instant-feeling reordering), then reconciles with the server.
+  // On failure, a stale optimistic flip left in `conversations` would
+  // silently diverge from the DB, so refetch the authoritative list instead
+  // of guessing how to roll back.
+  async function handlePinConversation(id: string, pinned: boolean) {
+    setConversations((list) => list.map((c) => (c.id === id ? { ...c, pinned } : c)));
+    try {
+      const res = await fetch(`/api/conversations/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pinned }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      console.error("failed to update pin", err);
+      void loadConversationList();
+    }
+  }
+
+  // Optimistic delete: removes the row immediately, then confirms with the
+  // server. A failure (network error or a 404 on a room already gone/not
+  // owned) refetches the real list rather than leaving the UI showing a row
+  // that still exists server-side (or hiding one that's already gone).
+  async function handleDeleteConversation(id: string) {
+    setConversations((list) => list.filter((c) => c.id !== id));
+    try {
+      const res = await fetch(`/api/conversations/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Forget this room if it was any expert's "most recent" pointer, so a
+      // future send() doesn't try to continue a conversation that no longer
+      // exists server-side.
+      setConversationIds((m) => {
+        const next = { ...m };
+        for (const [expertId, cid] of Object.entries(next)) {
+          if (cid === id) delete next[expertId];
+        }
+        return next;
+      });
+    } catch (err) {
+      console.error("failed to delete conversation", err);
+      void loadConversationList();
+    }
+  }
+
+  // Opens the Stripe Billing Portal (better-auth's stripeClient plugin
+  // exposes it as subscription.billingPortal — the endpoint's response sets
+  // {redirect: true, url}, which better-auth's client redirect plugin acts
+  // on automatically, so there's nothing further to do here on success).
+  function handleManagePlan() {
+    authClient.subscription.billingPortal({ returnUrl: "/assistant" }).catch((err: unknown) => {
+      console.error("failed to open billing portal", err);
+    });
+  }
+
+  function handleLogout() {
+    setDrawerOpen(false);
+    authClient.signOut().catch((err: unknown) => console.error("failed to sign out", err));
   }
 
   // Best-effort import of this anonymous session's per-expert chat threads
@@ -612,6 +687,15 @@ export default function AssistantPage() {
         <div className="pointer-events-auto">
           <CampusPicker value={campus} onChange={setCampus} />
         </div>
+        {session && (
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            className="pointer-events-auto bg-[rgba(16,21,36,0.9)] border-2 border-[#2b3450] hover:border-[#3d4a6b] rounded-lg px-3.5 py-2.5 cursor-pointer"
+          >
+            <span className="font-pixel text-[7px] text-[#f8f6f2]">▤ MY CHATS</span>
+          </button>
+        )}
         {!active && (
           <div className="ml-auto bg-[rgba(16,21,36,0.9)] border-2 border-[#FFD23F] rounded-full px-3.5 py-2.5">
             <span className="font-pixel text-[7px] text-[#FFD23F]">▼ CLICK AN EXPERT ON THE QUAD</span>
@@ -864,6 +948,21 @@ export default function AssistantPage() {
           importAnonThreads();
           retryPending();
         }}
+      />
+
+      <ChatDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        conversations={sortConversations(conversations).map((c) => {
+          const expert = EXPERTS.find((e) => e.id === c.expertId);
+          return { ...c, sprite: expert?.sprite ?? EXPERTS[0].sprite, label: expert?.label ?? c.expertId };
+        })}
+        onOpen={handleOpenConversation}
+        onPin={handlePinConversation}
+        onDelete={handleDeleteConversation}
+        usage={usage}
+        onManagePlan={handleManagePlan}
+        onLogout={handleLogout}
       />
     </div>
   );
