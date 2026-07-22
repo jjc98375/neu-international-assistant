@@ -381,6 +381,151 @@ describe("AssistantPage — login gate / retry logic", () => {
     screen.getByText(question); // throws if not rendered
   });
 
+  // Residual variant of the Task 8 fix above, found in re-review: `msgsEpoch`
+  // was previously bumped ONLY at send-start, never when the bot's reply (or
+  // an error) is appended. So "epoch unchanged since fetch-start" was not a
+  // valid "safe to overwrite" signal — a retried send could complete
+  // *entirely* (reply appended, busyIdRef cleared) while the historical load
+  // was still in flight, and the epoch never moved through that whole
+  // window. This test releases the retried POST FIRST (letting it fully
+  // resolve and render) and only THEN releases the already-in-flight
+  // historical GET, and asserts the completed exchange survives.
+  it("does not let a late historical-conversation load clobber an already-completed retried exchange", async () => {
+    let assistantCallCount = 0;
+
+    let releaseRetryResponse: () => void = () => {};
+    const retryGate = new Promise<void>((resolve) => {
+      releaseRetryResponse = resolve;
+    });
+    let resolveRetryRequested: () => void = () => {};
+    const retryRequested = new Promise<void>((resolve) => {
+      resolveRetryRequested = resolve;
+    });
+
+    let releaseMessagesResponse: () => void = () => {};
+    const messagesGate = new Promise<void>((resolve) => {
+      releaseMessagesResponse = resolve;
+    });
+    let resolveMessagesRequested: () => void = () => {};
+    const messagesRequested = new Promise<void>((resolve) => {
+      resolveMessagesRequested = resolve;
+    });
+
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (url === "/api/conversations") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            conversations: [
+              {
+                id: "conv-billing",
+                expertId: "billing",
+                campus: "boston",
+                title: "Old room",
+                pinned: false,
+                updatedAt: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+          }),
+        };
+      }
+      if (url === "/api/conversations/conv-billing/messages") {
+        // Signal that the historical GET is now in flight, then hold it
+        // open until the test explicitly releases it — deliberately AFTER
+        // the retried POST below has been released and fully resolved.
+        resolveMessagesRequested();
+        await messagesGate;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            messages: [
+              { role: "user", content: "Old question", createdAt: "2026-01-01T00:00:01.000Z" },
+              {
+                role: "bot",
+                content: "Old answer.",
+                categoryName: "Billing",
+                viaWeb: false,
+                sources: [],
+                createdAt: "2026-01-01T00:00:02.000Z",
+              },
+            ],
+          }),
+        };
+      }
+      assistantCallCount++;
+      if (assistantCallCount === 1) {
+        return { ok: false, status: 401, json: async () => ({ error: "login_required", gate: true }) };
+      }
+      // The retried POST — held open until the test releases it, so it's
+      // still in flight at the same time as the historical GET above.
+      resolveRetryRequested();
+      await retryGate;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          answer: "Your hold has been cleared.",
+          categoryName: "Billing",
+          sources: [],
+          conversationId: "conv-billing",
+        }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    vi.mocked(authClient.signIn.email).mockImplementation(async () => {
+      mockSession.data = { user: { id: "u1", email: "student@northeastern.edu" } };
+      return { data: {}, error: null } as never;
+    });
+
+    render(<AssistantPage />);
+
+    fireEvent.click(screen.getByLabelText(/Chat with the Billing expert/i));
+    const input = await screen.findByPlaceholderText(/Ask the billing expert/i);
+    const question = "Why is my account on hold?";
+    fireEvent.change(input, { target: { value: question } });
+    fireEvent.click(screen.getByText(/SEND/));
+
+    await screen.findByText(/로그인이 필요해요/);
+
+    fireEvent.change(screen.getByPlaceholderText(/^Email$/i), {
+      target: { value: "student@northeastern.edu" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/^Password$/i), {
+      target: { value: "hunter2" },
+    });
+    fireEvent.click(screen.getByText("로그인"));
+
+    // Wait until BOTH the retried POST and the historical GET are in flight
+    // at the same time (this is the shape of the re-reviewer's repro).
+    await Promise.all([retryRequested, messagesRequested]);
+
+    // Release the retried POST first and let it resolve COMPLETELY — reply
+    // appended, DOM shows the real Q&A — while the historical GET is still
+    // held open.
+    releaseRetryResponse();
+    await screen.findByText("Your hold has been cleared.");
+    screen.getByText(question); // throws if not rendered
+
+    // Now let the stale historical load resolve. Pre-fix, the epoch never
+    // moved during the retried send's full lifecycle (bumped only once, at
+    // send-start), so `loadConversationMessages`'s "unchanged since
+    // fetch-start" guard wrongly treats this as safe and overwrites the
+    // completed exchange with the old history.
+    releaseMessagesResponse();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The real, completed exchange must still be present...
+    screen.getByText(question); // throws if not rendered
+    screen.getByText("Your hold has been cleared."); // throws if not rendered
+    // ...and the stale historical Q&A must not have been rendered.
+    expect(screen.queryByText("Old question")).toBeNull();
+    expect(screen.queryByText("Old answer.")).toBeNull();
+  });
+
   // Task 8 fix (Important #2): the server includes a `usage` snapshot on a
   // 429 quota_exceeded response (same shape as the success path) — the
   // component must still read it, not just on `res.ok`.

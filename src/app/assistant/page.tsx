@@ -415,6 +415,7 @@ export default function AssistantPage() {
               error: true,
             };
         setMsgs((m) => ({ ...m, [id]: [...m[id], reply] }));
+        msgsEpoch.current[id] = (msgsEpoch.current[id] ?? 0) + 1;
         if (res.ok) {
           if (data.conversationId) {
             setConversationIds((m) => ({ ...m, [id]: data.conversationId }));
@@ -433,6 +434,7 @@ export default function AssistantPage() {
         ...m,
         [id]: [...m[id], { from: "bot", text: `I couldn't reach the records office (${detail}). Check your connection and ask again.`, error: true }],
       }));
+      msgsEpoch.current[id] = (msgsEpoch.current[id] ?? 0) + 1;
     } finally {
       setBusyId(null);
       if (busyIdRef.current === id) busyIdRef.current = null;
