@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 
 // Shared shape with page.tsx's `usage` state (Task 8) — kept structurally
@@ -33,14 +34,22 @@ export function PaywallModal({
   onClose: () => void;
   usage: UsageSnapshot | null;
 }) {
+  const [error, setError] = useState<string | null>(null);
+
   if (!open) return null;
 
-  function handleUpgrade(plan: Plan["id"]) {
-    authClient.subscription.upgrade({
-      plan,
-      successUrl: "/assistant?upgraded=1",
-      cancelUrl: "/assistant",
-    });
+  async function handleUpgrade(plan: Plan["id"]) {
+    setError(null);
+    try {
+      await authClient.subscription.upgrade({
+        plan,
+        successUrl: "/assistant?upgraded=1",
+        cancelUrl: "/assistant",
+      });
+    } catch (err) {
+      console.error("failed to start checkout", err);
+      setError("결제를 시작하지 못했어요. 잠시 후 다시 시도해 주세요.");
+    }
   }
 
   return (
@@ -100,6 +109,12 @@ export function PaywallModal({
             </button>
           ))}
         </div>
+
+        {error && (
+          <div className="mt-4 font-plex text-[12.5px] text-[#ff8a8a] bg-[#2a1218] border border-[#CC0000] rounded-md px-3 py-2 leading-snug">
+            {error}
+          </div>
+        )}
 
         {/* Footnote */}
         <div className="mt-5 text-center font-plex text-[11.5px] text-[#5b6480]">

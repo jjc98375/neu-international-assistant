@@ -17,3 +17,10 @@ it("shows both plans and requests the chosen upgrade", () => {
   fireEvent.click(screen.getByText(/HUSKY PLUS/i));
   expect(upgrade).toHaveBeenCalledWith(expect.objectContaining({ plan: "plus" }));
 });
+
+it("surfaces an error message when checkout fails to start", async () => {
+  upgrade.mockRejectedValue(new Error("boom"));
+  render(<PaywallModal open onClose={() => {}} usage={{ used: 10, limit: 10, tier: "free" }} />);
+  fireEvent.click(screen.getByText(/HUSKY PLUS/i));
+  expect(await screen.findByText(/결제를 시작하지 못했어요/)).toBeTruthy();
+});
