@@ -167,9 +167,11 @@ footer usage counter + "manage plan" + logout).
 **Not yet live-verified:** `MICROSOFT_CLIENT_ID`/`MICROSOFT_CLIENT_SECRET` and all
 `STRIPE_*` values in `.env.local` are placeholders (`placeholder-until-entra-app`,
 `sk_test_placeholder`, etc.) — Microsoft OAuth login and the Stripe checkout/webhook/cancel
-flow have **not** been exercised end-to-end against real providers. Google OAuth and
-email/password login have real-looking local credentials and were smoke-tested (see git log /
-task reports for Task 12). When real Stripe test-mode keys are available, run `stripe listen
+flow have **not** been exercised end-to-end against real providers. Google OAuth has
+real-looking (non-placeholder) local credentials, but — like Microsoft — its redirect flow has
+not been driven through a real browser yet; only email/password login was actually
+smoke-tested end-to-end (see the Task 12 report in `.superpowers/sdd/` for what was and wasn't
+verified). When real Stripe test-mode keys are available, run `stripe listen
 --forward-to localhost:3000/api/auth/stripe/webhook` in a separate terminal before testing
 checkout/upgrade/cancel locally, so the plugin's webhook handler receives subscription-status
 events.
