@@ -15,7 +15,7 @@ describe("LoginModal", () => {
   it("renders both OAuth buttons and the email form when open", () => {
     render(<LoginModal open onClose={() => {}} onSuccess={() => {}} />);
     expect(screen.getByText(/GOOGLE/i)).toBeTruthy();
-    expect(screen.getByText(/NEU 학교 계정/)).toBeTruthy();
+    expect(screen.getByText(/CONTINUE WITH NEU/)).toBeTruthy();
     expect(screen.getByPlaceholderText(/email/i)).toBeTruthy();
   });
   it("renders nothing when closed", () => {
@@ -26,7 +26,7 @@ describe("LoginModal", () => {
   it("calls signIn.social with {provider: 'google', callbackURL} when the Google button is clicked", async () => {
     vi.mocked(authClient.signIn.social).mockResolvedValue({ data: {}, error: null } as never);
     render(<LoginModal open onClose={() => {}} onSuccess={() => {}} />);
-    fireEvent.click(screen.getByText(/GOOGLE로 계속하기/));
+    fireEvent.click(screen.getByText(/CONTINUE WITH GOOGLE/));
     await waitFor(() => {
       expect(authClient.signIn.social).toHaveBeenCalledWith({ provider: "google", callbackURL: "/assistant" });
     });
@@ -35,7 +35,7 @@ describe("LoginModal", () => {
   it("calls signIn.social with {provider: 'microsoft', callbackURL} when the Microsoft button is clicked", async () => {
     vi.mocked(authClient.signIn.social).mockResolvedValue({ data: {}, error: null } as never);
     render(<LoginModal open onClose={() => {}} onSuccess={() => {}} />);
-    fireEvent.click(screen.getByText(/NEU 학교 계정으로 로그인/));
+    fireEvent.click(screen.getByText(/CONTINUE WITH NEU/));
     await waitFor(() => {
       expect(authClient.signIn.social).toHaveBeenCalledWith({ provider: "microsoft", callbackURL: "/assistant" });
     });
@@ -47,7 +47,7 @@ describe("LoginModal", () => {
       error: { message: "OAuth provider denied the request" },
     } as never);
     render(<LoginModal open onClose={() => {}} onSuccess={() => {}} />);
-    fireEvent.click(screen.getByText(/GOOGLE로 계속하기/));
+    fireEvent.click(screen.getByText(/CONTINUE WITH GOOGLE/));
     expect(await screen.findByText("OAuth provider denied the request")).toBeTruthy();
   });
 });

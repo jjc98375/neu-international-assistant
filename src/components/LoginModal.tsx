@@ -3,32 +3,51 @@
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 
-/* ── Tiny pixel-art provider icons (4×4 grid, crisp squares) ────────────── */
+/* ── Provider brand marks ───────────────────────────────────────────────────
+   These are the only non-pixel artwork in the modal, on purpose: Google's and
+   Microsoft's marks may not be redrawn or restyled per their brand guidelines,
+   and the smooth vectors against the blocky frame read as "external service"
+   rather than decoration.                                                    */
 
-function GoogleIcon() {
+function GoogleMark() {
   return (
-    <svg width={16} height={16} viewBox="0 0 4 4" style={{ shapeRendering: "crispEdges" }} aria-hidden>
-      <rect x={0} y={0} width={2} height={2} fill="#EA4335" />
-      <rect x={2} y={0} width={2} height={2} fill="#4285F4" />
-      <rect x={0} y={2} width={2} height={2} fill="#FBBC05" />
-      <rect x={2} y={2} width={2} height={2} fill="#34A853" />
+    <svg width={16} height={16} viewBox="0 0 48 48" aria-hidden>
+      <path
+        fill="#4285F4"
+        d="M45.12 24.5c0-1.56-.14-3.06-.4-4.5H24v8.51h11.84c-.51 2.75-2.06 5.08-4.39 6.64v5.52h7.11c4.16-3.83 6.56-9.47 6.56-16.17z"
+      />
+      <path
+        fill="#34A853"
+        d="M24 46c5.94 0 10.92-1.97 14.56-5.33l-7.11-5.52c-1.97 1.32-4.49 2.1-7.45 2.1-5.73 0-10.58-3.87-12.31-9.07H4.34v5.7C7.96 41.07 15.4 46 24 46z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M11.69 28.18C11.25 26.86 11 25.45 11 24s.25-2.86.69-4.18v-5.7H4.34C2.85 17.09 2 20.45 2 24s.85 6.91 2.34 9.88l7.35-5.7z"
+      />
+      <path
+        fill="#EA4335"
+        d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2 15.4 2 7.96 6.93 4.34 14.12l7.35 5.7c1.73-5.2 6.58-9.07 12.31-9.07z"
+      />
     </svg>
   );
 }
 
-function MicrosoftIcon() {
+function MicrosoftMark() {
   return (
-    <svg width={16} height={16} viewBox="0 0 4 4" style={{ shapeRendering: "crispEdges" }} aria-hidden>
-      <rect x={0} y={0} width={1.9} height={1.9} fill="#F25022" />
-      <rect x={2.1} y={0} width={1.9} height={1.9} fill="#7FBA00" />
-      <rect x={0} y={2.1} width={1.9} height={1.9} fill="#00A4EF" />
-      <rect x={2.1} y={2.1} width={1.9} height={1.9} fill="#FFB900" />
+    <svg width={16} height={16} viewBox="0 0 23 23" style={{ shapeRendering: "crispEdges" }} aria-hidden>
+      <rect x={1} y={1} width={10} height={10} fill="#F25022" />
+      <rect x={12} y={1} width={10} height={10} fill="#7FBA00" />
+      <rect x={1} y={12} width={10} height={10} fill="#00A4EF" />
+      <rect x={12} y={12} width={10} height={10} fill="#FFB900" />
     </svg>
   );
 }
 
 const inputClass =
   "w-full font-plex text-[14px] text-[#f8f6f2] bg-[#12172a] border-2 border-[#2b3450] rounded-lg px-3.5 py-2.5 outline-none placeholder:text-[#5b6480] focus:border-[#FFD23F] transition-colors";
+
+const socialClass =
+  "flex items-center justify-center gap-2.5 font-pixel text-[9px] rounded-lg px-4 py-2.5 cursor-pointer border-2 shadow-[0_3px_0_#0a0e19] active:translate-y-[2px] active:shadow-[0_1px_0_#0a0e19] transition-transform";
 
 export function LoginModal({
   open,
@@ -48,16 +67,23 @@ export function LoginModal({
 
   if (!open) return null;
 
+  const signingUp = mode === "signup";
+
   async function submitEmail() {
     if (busy) return;
     setError(null);
     setBusy(true);
     try {
-      const res =
-        mode === "login"
-          ? await authClient.signIn.email({ email, password })
-          : await authClient.signUp.email({ email, password, name: name || email.split("@")[0] });
-      if (res.error) setError(res.error.message ?? "로그인에 실패했어요. 다시 시도해 주세요.");
+      const res = signingUp
+        ? await authClient.signUp.email({ email, password, name: name || email.split("@")[0] })
+        : await authClient.signIn.email({ email, password });
+      if (res.error)
+        setError(
+          res.error.message ??
+            (signingUp
+              ? "Couldn't create that account. Try a different email."
+              : "Couldn't sign you in. Check your email and password."),
+        );
       else onSuccess();
     } finally {
       setBusy(false);
@@ -70,7 +96,11 @@ export function LoginModal({
     setBusy(true);
     try {
       const res = await authClient.signIn.social({ provider, callbackURL: "/assistant" });
-      if (res.error) setError(res.error.message ?? "로그인에 실패했어요. 다시 시도해 주세요.");
+      if (res.error)
+        setError(
+          res.error.message ??
+            `Couldn't reach ${provider === "google" ? "Google" : "Microsoft"}. Try again.`,
+        );
       // On success, better-auth performs its own full-page OAuth redirect —
       // nothing further to do here.
     } finally {
@@ -83,13 +113,13 @@ export function LoginModal({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="로그인이 필요해요"
+        aria-label={signingUp ? "Create account" : "Sign in to continue"}
         className="font-plex relative w-full max-w-[380px] bg-[#1a2030] border-2 border-[#FFD23F] rounded-[14px] shadow-[0_10px_34px_rgba(10,14,25,0.6)] px-6 py-6"
       >
         {/* Close */}
         <button
           onClick={onClose}
-          aria-label="Close login dialog"
+          aria-label="Close"
           className="absolute top-3.5 right-3.5 w-8 h-8 bg-[#CC0000] hover:bg-[#e51b1b] border-2 border-[#7a0000] rounded-md cursor-pointer grid place-items-center"
         >
           <svg width={16} height={16} viewBox="0 0 7 7" style={{ shapeRendering: "crispEdges" }} aria-hidden>
@@ -104,37 +134,14 @@ export function LoginModal({
 
         {/* Header */}
         <div className="pr-8 mb-5">
-          <div className="font-pixel text-[12px] text-[#FFD23F] leading-relaxed">로그인이 필요해요</div>
-          <div className="mt-2 font-plex text-[13px] text-[#b7bfd4] leading-relaxed">
-            전문가들이 계속 도와드리려면 로그인해 주세요
+          <div className="font-pixel text-[12px] text-[#FFD23F] leading-relaxed">
+            {signingUp ? "CREATE ACCOUNT" : "SIGN IN TO CONTINUE"}
           </div>
-        </div>
-
-        {/* OAuth */}
-        <div className="flex flex-col gap-2.5">
-          <button
-            type="button"
-            onClick={() => social("google")}
-            className="flex items-center justify-center gap-2.5 font-pixel text-[9px] text-[#1a2030] bg-[#f8f6f2] hover:bg-white border-2 border-[#1a2030] rounded-lg px-4 py-2.5 cursor-pointer shadow-[0_3px_0_#0a0e19] active:translate-y-[2px] active:shadow-[0_1px_0_#0a0e19] transition-transform"
-          >
-            <GoogleIcon />
-            GOOGLE로 계속하기
-          </button>
-          <button
-            type="button"
-            onClick={() => social("microsoft")}
-            className="flex items-center justify-center gap-2.5 font-pixel text-[9px] text-[#f8f6f2] bg-[#232b42] hover:bg-[#2b3450] border-2 border-[#2b3450] rounded-lg px-4 py-2.5 cursor-pointer shadow-[0_3px_0_#0a0e19] active:translate-y-[2px] active:shadow-[0_1px_0_#0a0e19] transition-transform"
-          >
-            <MicrosoftIcon />
-            NEU 학교 계정으로 로그인
-          </button>
-        </div>
-
-        {/* Divider */}
-        <div className="flex items-center gap-3 my-5">
-          <div className="h-px flex-1 bg-[#2b3450]" />
-          <span className="font-pixel text-[6px] text-[#5b6480]">OR</span>
-          <div className="h-px flex-1 bg-[#2b3450]" />
+          <div className="mt-2 font-plex text-[13px] text-[#b7bfd4] leading-relaxed">
+            {signingUp
+              ? "10 questions a day, and every chat saved to your history."
+              : "You've used your free questions. Sign in to keep asking the experts."}
+          </div>
         </div>
 
         {/* Email form */}
@@ -145,7 +152,7 @@ export function LoginModal({
           }}
           className="flex flex-col gap-2.5"
         >
-          {mode === "signup" && (
+          {signingUp && (
             <input
               value={name}
               onChange={(ev) => setName(ev.target.value)}
@@ -181,9 +188,36 @@ export function LoginModal({
             disabled={busy}
             className="mt-1 font-pixel text-[10px] text-white bg-[#CC0000] hover:bg-[#e51b1b] disabled:opacity-50 disabled:hover:bg-[#CC0000] border-2 border-[#1a2030] rounded-lg px-4 py-3 cursor-pointer disabled:cursor-default shadow-[0_3px_0_#7a0000] enabled:active:translate-y-[2px] enabled:active:shadow-[0_1px_0_#7a0000] transition-transform"
           >
-            {busy ? "잠시만요…" : mode === "login" ? "로그인" : "회원가입"}
+            {busy ? (signingUp ? "CREATING…" : "SIGNING IN…") : signingUp ? "CREATE ACCOUNT" : "SIGN IN"}
           </button>
         </form>
+
+        {/* Divider */}
+        <div className="flex items-center gap-3 my-5">
+          <div className="h-px flex-1 bg-[#2b3450]" />
+          <span className="font-pixel text-[6px] text-[#5b6480]">OR</span>
+          <div className="h-px flex-1 bg-[#2b3450]" />
+        </div>
+
+        {/* OAuth */}
+        <div className="flex flex-col gap-2.5">
+          <button
+            type="button"
+            onClick={() => social("google")}
+            className={`${socialClass} text-[#1a2030] bg-[#f8f6f2] hover:bg-white border-[#1a2030]`}
+          >
+            <GoogleMark />
+            CONTINUE WITH GOOGLE
+          </button>
+          <button
+            type="button"
+            onClick={() => social("microsoft")}
+            className={`${socialClass} text-[#f8f6f2] bg-[#232b42] hover:bg-[#2b3450] border-[#2b3450]`}
+          >
+            <MicrosoftMark />
+            CONTINUE WITH NEU
+          </button>
+        </div>
 
         {/* Mode toggle */}
         <div className="mt-4 text-center">
@@ -195,7 +229,7 @@ export function LoginModal({
             }}
             className="font-pixel text-[7px] text-[#FFD23F] hover:text-[#ffdf70] underline cursor-pointer"
           >
-            {mode === "login" ? "계정이 없으신가요? 회원가입" : "이미 계정이 있으신가요? 로그인"}
+            {signingUp ? "Already have an account? Sign in" : "New here? Create an account"}
           </button>
         </div>
       </div>
