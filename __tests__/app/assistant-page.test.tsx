@@ -69,7 +69,7 @@ describe("AssistantPage — login gate / retry logic", () => {
     fireEvent.click(screen.getByText(/SEND/));
 
     // Login modal appears (its heading is unique to LoginModal).
-    await screen.findByText(/로그인이 필요해요/);
+    await screen.findByText(/SIGN IN TO CONTINUE/);
     // The optimistic user bubble that was added on submit gets removed once
     // the gate fires — the just-typed question should no longer be present.
     expect(screen.queryByText(question)).toBeNull();
@@ -124,7 +124,7 @@ describe("AssistantPage — login gate / retry logic", () => {
     fireEvent.change(input, { target: { value: question } });
     fireEvent.click(screen.getByText(/SEND/));
 
-    await screen.findByText(/로그인이 필요해요/);
+    await screen.findByText(/SIGN IN TO CONTINUE/);
     expect(assistantCalls()).toHaveLength(1);
 
     fireEvent.change(screen.getByPlaceholderText(/^Email$/i), {
@@ -133,7 +133,7 @@ describe("AssistantPage — login gate / retry logic", () => {
     fireEvent.change(screen.getByPlaceholderText(/^Password$/i), {
       target: { value: "hunter2" },
     });
-    fireEvent.click(screen.getByText("로그인"));
+    fireEvent.click(screen.getByText("SIGN IN"));
 
     await waitFor(() => expect(assistantCalls()).toHaveLength(2));
     // Flush a tick for any redundant effect-triggered retry to (fail to) run.
@@ -358,7 +358,7 @@ describe("AssistantPage — login gate / retry logic", () => {
     fireEvent.change(input, { target: { value: question } });
     fireEvent.click(screen.getByText(/SEND/));
 
-    await screen.findByText(/로그인이 필요해요/);
+    await screen.findByText(/SIGN IN TO CONTINUE/);
 
     fireEvent.change(screen.getByPlaceholderText(/^Email$/i), {
       target: { value: "student@northeastern.edu" },
@@ -366,7 +366,7 @@ describe("AssistantPage — login gate / retry logic", () => {
     fireEvent.change(screen.getByPlaceholderText(/^Password$/i), {
       target: { value: "hunter2" },
     });
-    fireEvent.click(screen.getByText("로그인"));
+    fireEvent.click(screen.getByText("SIGN IN"));
 
     // Let the historical-conversation load (triggered by the login
     // transition's loadConversationList -> lazy-load effect) resolve and get
@@ -496,7 +496,7 @@ describe("AssistantPage — login gate / retry logic", () => {
     fireEvent.change(input, { target: { value: question } });
     fireEvent.click(screen.getByText(/SEND/));
 
-    await screen.findByText(/로그인이 필요해요/);
+    await screen.findByText(/SIGN IN TO CONTINUE/);
 
     fireEvent.change(screen.getByPlaceholderText(/^Email$/i), {
       target: { value: "student@northeastern.edu" },
@@ -504,7 +504,7 @@ describe("AssistantPage — login gate / retry logic", () => {
     fireEvent.change(screen.getByPlaceholderText(/^Password$/i), {
       target: { value: "hunter2" },
     });
-    fireEvent.click(screen.getByText("로그인"));
+    fireEvent.click(screen.getByText("SIGN IN"));
 
     // Wait until BOTH the retried POST and the historical GET are in flight
     // at the same time (this is the shape of the re-reviewer's repro).
@@ -566,9 +566,9 @@ describe("AssistantPage — login gate / retry logic", () => {
     // Task 10: a 429 opens the paywall modal (its headline interpolates the
     // usage snapshot the 429 body carried) instead of the generic
     // error-bubble path, and must not collide with the 401 login-gate path.
-    await screen.findByText(/오늘의 질문을 다 썼어요! \(10\/10\)/);
+    await screen.findByText(/THAT'S TODAY'S LIMIT \(10\/10\)/);
     expect(screen.queryByText(/Something went wrong on my desk/)).toBeNull();
-    expect(screen.queryByText(/로그인이 필요해요/)).toBeNull();
+    expect(screen.queryByText(/SIGN IN TO CONTINUE/)).toBeNull();
     const assistantCalls = fetchMock.mock.calls.filter(([url]) => url === "/api/assistant");
     expect(assistantCalls).toHaveLength(1);
   });
@@ -630,7 +630,7 @@ describe("AssistantPage — login gate / retry logic", () => {
     input = await screen.findByPlaceholderText(/Ask the billing expert/i);
     fireEvent.change(input, { target: { value: "Billing question" } });
     fireEvent.click(screen.getByText(/SEND/));
-    await screen.findByText(/로그인이 필요해요/);
+    await screen.findByText(/SIGN IN TO CONTINUE/);
 
     fireEvent.change(screen.getByPlaceholderText(/^Email$/i), {
       target: { value: "student@northeastern.edu" },
@@ -638,7 +638,7 @@ describe("AssistantPage — login gate / retry logic", () => {
     fireEvent.change(screen.getByPlaceholderText(/^Password$/i), {
       target: { value: "hunter2" },
     });
-    fireEvent.click(screen.getByText("로그인"));
+    fireEvent.click(screen.getByText("SIGN IN"));
 
     // Login success fires importAnonThreads() (imports the visa thread) and
     // retryPending() (retries the billing question) — wait for the retry's
@@ -841,7 +841,7 @@ describe("AssistantPage — history drawer (Task 9)", () => {
     );
     expect(deleteCallsBeforeConfirm).toHaveLength(0);
 
-    fireEvent.click(screen.getByText("정말 삭제?"));
+    fireEvent.click(screen.getByText("DELETE?"));
     await waitFor(() => {
       const deleteCalls = fetchMock.mock.calls.filter(
         ([u, i]) => u === "/api/conversations/conv-1" && (i as RequestInit | undefined)?.method === "DELETE",
@@ -977,9 +977,9 @@ describe("AssistantPage — usage HUD, paywall, and Stripe checkout wiring (Task
     fireEvent.change(input, { target: { value: "One more question?" } });
     fireEvent.click(screen.getByText(/SEND/));
 
-    await screen.findByText(/오늘의 질문을 다 썼어요! \(10\/10\)/);
+    await screen.findByText(/THAT'S TODAY'S LIMIT \(10\/10\)/);
     expect(screen.queryByText(/Something went wrong on my desk/)).toBeNull();
-    expect(screen.queryByText(/로그인이 필요해요/)).toBeNull();
+    expect(screen.queryByText(/SIGN IN TO CONTINUE/)).toBeNull();
 
     fireEvent.click(screen.getByText(/HUSKY PRO/i));
     expect(authClient.subscription.upgrade).toHaveBeenCalledWith({
@@ -996,7 +996,7 @@ describe("AssistantPage — usage HUD, paywall, and Stripe checkout wiring (Task
 
     render(<AssistantPage />);
 
-    await screen.findByText("HUSKY PLUS 활성화!");
+    await screen.findByText("HUSKY PLUS ACTIVE!");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/conversations"));
     expect(window.location.search).not.toContain("upgraded");
   });

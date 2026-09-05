@@ -21,8 +21,8 @@ interface Plan {
 }
 
 const PLANS: Plan[] = [
-  { id: "plus", name: "HUSKY PLUS", price: "$9.99/월", perDay: "하루 30 질문" },
-  { id: "pro", name: "HUSKY PRO", price: "$49.99/월", perDay: "하루 100 질문", best: true },
+  { id: "plus", name: "HUSKY PLUS", price: "$9.99/mo", perDay: "30 questions a day" },
+  { id: "pro", name: "HUSKY PRO", price: "$49.99/mo", perDay: "100 questions a day", best: true },
 ];
 
 export function PaywallModal({
@@ -48,7 +48,7 @@ export function PaywallModal({
       });
     } catch (err) {
       console.error("failed to start checkout", err);
-      setError("결제를 시작하지 못했어요. 잠시 후 다시 시도해 주세요.");
+      setError("Couldn't start checkout. Try again in a moment.");
     }
   }
 
@@ -57,7 +57,7 @@ export function PaywallModal({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="오늘의 질문을 다 썼어요"
+        aria-label="Daily limit reached"
         className="font-plex relative w-full max-w-[420px] bg-[#1a2030] border-2 border-[#FFD23F] rounded-[14px] shadow-[0_10px_34px_rgba(10,14,25,0.6)] px-6 py-6"
       >
         {/* Close */}
@@ -79,7 +79,7 @@ export function PaywallModal({
         {/* Header */}
         <div className="pr-8 mb-5">
           <div className="font-pixel text-[11px] text-[#FFD23F] leading-relaxed">
-            오늘의 질문을 다 썼어요! ({usage ? usage.used : 0}/{usage ? usage.limit : 0})
+            THAT'S TODAY'S LIMIT ({usage ? usage.used : 0}/{usage ? usage.limit : 0})
           </div>
         </div>
 
@@ -118,7 +118,7 @@ export function PaywallModal({
 
         {/* Footnote */}
         <div className="mt-5 text-center font-plex text-[11.5px] text-[#5b6480]">
-          언제든 해지 가능 · Stripe 보안 결제
+          Cancel anytime. Payments secured by Stripe.
         </div>
       </div>
     </div>

@@ -56,7 +56,7 @@ export function ChatDrawer({
   }, [open, onClose]);
 
   // Drop any pending delete-confirmation when the drawer closes, so
-  // reopening it never resumes an armed "정말 삭제?" state on a row the user
+  // reopening it never resumes an armed "DELETE?" state on a row the user
   // may not even remember clicking.
   useEffect(() => {
     if (!open) setConfirmId(null);
@@ -169,7 +169,7 @@ export function ChatDrawer({
                       }}
                       className="font-pixel text-[6px] text-white bg-[#CC0000] hover:bg-[#e51b1b] border-2 border-[#7a0000] rounded-md px-2 py-2 cursor-pointer whitespace-nowrap"
                     >
-                      정말 삭제?
+                      DELETE?
                     </button>
                   ) : (
                     <button
@@ -203,7 +203,7 @@ export function ChatDrawer({
               onClick={onManagePlan}
               className="flex-1 font-pixel text-[7px] text-[#1a2030] bg-[#FFD23F] hover:bg-[#ffdf70] border-2 border-[#1a2030] rounded-lg px-3 py-2.5 cursor-pointer"
             >
-              PLAN 관리
+              MANAGE PLAN
             </button>
             <button
               type="button"

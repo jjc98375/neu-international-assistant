@@ -153,7 +153,7 @@ describe("ChatDrawer", () => {
 
     // The ✕ button is replaced by a Korean confirm prompt — clicking it is
     // the second, confirming click.
-    fireEvent.click(screen.getByText("정말 삭제?"));
+    fireEvent.click(screen.getByText("DELETE?"));
     expect(onDelete).toHaveBeenCalledWith("room-1");
     expect(onOpen).not.toHaveBeenCalled();
   });
@@ -175,14 +175,14 @@ describe("ChatDrawer", () => {
     );
     const deleteButton = screen.getByLabelText("Delete conversation");
     fireEvent.click(deleteButton);
-    expect(screen.getByText("정말 삭제?")).toBeTruthy();
+    expect(screen.getByText("DELETE?")).toBeTruthy();
 
     fireEvent.mouseLeave(deleteButton.closest('[role="button"]')!);
-    expect(screen.queryByText("정말 삭제?")).toBeNull();
+    expect(screen.queryByText("DELETE?")).toBeNull();
     expect(screen.getByLabelText("Delete conversation")).toBeTruthy();
   });
 
-  it("shows TODAY used/limit from usage and wires the PLAN 관리 / LOGOUT buttons", () => {
+  it("shows TODAY used/limit from usage and wires the MANAGE PLAN / LOGOUT buttons", () => {
     const onManagePlan = vi.fn();
     const onLogout = vi.fn();
     render(
@@ -199,7 +199,7 @@ describe("ChatDrawer", () => {
       />,
     );
     expect(screen.getByText(/TODAY 3\/10/)).toBeTruthy();
-    fireEvent.click(screen.getByText("PLAN 관리"));
+    fireEvent.click(screen.getByText("MANAGE PLAN"));
     expect(onManagePlan).toHaveBeenCalled();
     fireEvent.click(screen.getByText("LOGOUT"));
     expect(onLogout).toHaveBeenCalled();

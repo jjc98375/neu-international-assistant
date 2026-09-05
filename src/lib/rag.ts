@@ -57,6 +57,7 @@ export function buildPrompt(
     `needs steps. Put key figures, dates, and deadlines in **bold**. Use a ` +
     `short bullet list when listing items; otherwise plain sentences. No ` +
     `headings, no sign-off, no "let me know if" filler.\n\n` +
+    `Language: reply in the same language the question is written in — if the student asks in Korean, answer in Korean; otherwise answer in English. The source documents are in English, so translate what you quote. Keep proper nouns, form names, and visa codes (F-1, OPT, CPT, SEVIS, I-20) in English.\n\n` +
     `Respond as JSON: {"answered": boolean, "answer": string}. Set ` +
     `"answered" to false when the context does NOT contain the specific ` +
     `information the question asks for (e.g. a figure, rate, or policy that ` +
@@ -260,6 +261,7 @@ export async function searchWeb(
       `deadlines in **bold**. Use a short bullet list when listing items. Do NOT ` +
       `put inline URL citations or links in the text — sources are shown to the ` +
       `user separately. No headings, no sign-off, no "if you want, I can" filler.\n\n` +
+      `Language: reply in the same language the question is written in — if the student asks in Korean, answer in Korean; otherwise answer in English. The source documents are in English, so translate what you quote. Keep proper nouns, form names, and visa codes (F-1, OPT, CPT, SEVIS, I-20) in English.\n\n` +
       `Question: ${question}`,
   } as Parameters<ReturnType<typeof getOpenAI>["responses"]["create"]>[0]);
 

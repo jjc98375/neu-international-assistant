@@ -743,7 +743,7 @@ export default function AssistantPage() {
         )}
         {upgradedToast && (
           <div className="pointer-events-auto bg-[rgba(16,21,36,0.9)] border-2 border-[#FFD23F] rounded-[10px] px-3.5 py-2.5">
-            <span className="font-pixel text-[7px] text-[#FFD23F]">HUSKY PLUS 활성화!</span>
+            <span className="font-pixel text-[7px] text-[#FFD23F]">HUSKY PLUS ACTIVE!</span>
           </div>
         )}
         {!active && (
