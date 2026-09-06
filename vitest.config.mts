@@ -7,6 +7,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    setupFiles: ["./__tests__/setup.ts"],
     // "**/.claude/**" keeps vitest from discovering third-party package tests
     // inside nested git-worktree node_modules under .claude/worktrees/.
     exclude: ["__tests__/integration/**", "node_modules/**", "**/.claude/**"],

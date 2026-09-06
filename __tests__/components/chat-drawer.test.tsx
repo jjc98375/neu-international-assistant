@@ -50,7 +50,7 @@ describe("ChatDrawer", () => {
         onLogout={noop}
       />,
     );
-    expect(screen.getByText("▤ MY CHATS")).toBeTruthy();
+    expect(screen.getByText("MY CHATS")).toBeTruthy();
     expect(screen.getByText("Room A")).toBeTruthy();
     expect(screen.getByText("Room B")).toBeTruthy();
   });
@@ -281,6 +281,55 @@ describe("ChatDrawer", () => {
     expect(backdrop).toBeTruthy();
     expect(container.contains(backdrop)).toBe(true);
     fireEvent.click(backdrop);
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("docked: renders as a complementary rail with no backdrop, and ignores Escape", () => {
+    const onClose = vi.fn();
+    render(
+      <ChatDrawer
+        open
+        docked
+        onClose={onClose}
+        conversations={[]}
+        onOpen={noop}
+        onPin={noop}
+        onDelete={noop}
+        usage={null}
+        onManagePlan={noop}
+        onLogout={noop}
+      />,
+    );
+
+    // A rail sits beside the page, so it is not a modal dialog and nothing
+    // dims behind it.
+    const rail = screen.getByRole("complementary");
+    expect(rail).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(rail.previousElementSibling).toBeNull();
+
+    // Escape belongs to whatever is actually covering the page (the chat
+    // pull-up); the rail must not swallow it.
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("overlay: Escape still closes the floating drawer", () => {
+    const onClose = vi.fn();
+    render(
+      <ChatDrawer
+        open
+        onClose={onClose}
+        conversations={[]}
+        onOpen={noop}
+        onPin={noop}
+        onDelete={noop}
+        usage={null}
+        onManagePlan={noop}
+        onLogout={noop}
+      />,
+    );
+    fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalled();
   });
 });

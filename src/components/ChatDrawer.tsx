@@ -18,8 +18,30 @@ export interface DrawerConversation {
   label: string;
 }
 
+/** Pixel speech bubble with two text lines. Replaces the ▤ that used to sit
+ *  here: Press Start 2P has no glyph for U+25A4, so it fell through to a
+ *  fallback font and rendered as an unlabelled box. */
+export function ChatsIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 10 10" style={{ shapeRendering: "crispEdges" }} aria-hidden>
+      {/* bubble outline */}
+      <rect x={0} y={0} width={9} height={1} fill="currentColor" />
+      <rect x={0} y={6} width={9} height={1} fill="currentColor" />
+      <rect x={0} y={0} width={1} height={7} fill="currentColor" />
+      <rect x={8} y={0} width={1} height={7} fill="currentColor" />
+      {/* text lines */}
+      <rect x={2} y={2} width={5} height={1} fill="currentColor" />
+      <rect x={2} y={4} width={3} height={1} fill="currentColor" />
+      {/* tail */}
+      <rect x={2} y={7} width={2} height={1} fill="currentColor" />
+      <rect x={2} y={8} width={1} height={1} fill="currentColor" />
+    </svg>
+  );
+}
+
 export function ChatDrawer({
   open,
+  docked = false,
   onClose,
   conversations,
   onOpen,
@@ -30,6 +52,10 @@ export function ChatDrawer({
   onLogout,
 }: {
   open: boolean;
+  /** Rail mode: pinned open beside the page instead of floating over it.
+   *  The page only sets this at `lg` and up, where there is room to give up
+   *  320px without squeezing the quad; below that it stays an overlay. */
+  docked?: boolean;
   onClose: () => void;
   /** Already sorted (pinned first, most-recent next) — the caller runs this
    *  through sortConversations() before passing it in. */
@@ -49,11 +75,11 @@ export function ChatDrawer({
   useEffect(() => {
     if (!open) return;
     const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === "Escape") onClose();
+      if (ev.key === "Escape" && !docked) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, docked, onClose]);
 
   // Drop any pending delete-confirmation when the drawer closes, so
   // reopening it never resumes an armed "DELETE?" state on a row the user
@@ -67,31 +93,50 @@ export function ChatDrawer({
   return (
     <>
       {/* Backdrop — click to close. Sits below the panel (z-249 < z-250) and
-          above everything else on the page (quad, chat popup at z-200). */}
-      <div className="fixed inset-0 z-[249] bg-[rgba(10,14,25,0.55)]" onClick={onClose} aria-hidden />
+          above everything else on the page (quad, chat popup at z-200).
+          Docked mode has none: the rail sits beside the page, not over it. */}
+      {!docked && (
+        <div className="fixed inset-0 z-[249] bg-[rgba(10,14,25,0.55)]" onClick={onClose} aria-hidden />
+      )}
 
       <div
-        role="dialog"
+        role={docked ? "complementary" : "dialog"}
+        aria-modal={docked ? undefined : true}
         aria-label="My chats"
-        className="quad-drawer font-plex fixed inset-y-0 left-0 z-[250] w-[320px] max-w-[85vw] flex flex-col bg-[#12172a] border-r-2 border-[#2b3450] shadow-[10px_0_34px_rgba(10,14,25,0.5)]"
+        className={`font-plex fixed left-0 z-[250] flex flex-col bg-[#12172a] border-r-2 border-[#2b3450] ${
+          docked
+            ? "top-16 bottom-0 w-[240px]"
+            : "inset-y-0 w-[300px] max-w-[85vw] quad-drawer shadow-[10px_0_34px_rgba(10,14,25,0.5)]"
+        }`}
       >
         {/* Header */}
         <div className="flex-none flex items-center gap-3 px-4 py-3.5 bg-[#1a2030] border-b-2 border-[#2b3450]">
-          <span className="font-pixel text-[10px] text-[#FFD23F]">▤ MY CHATS</span>
+          <span className="flex items-center gap-2 font-pixel text-[10px] text-[#FFD23F]">
+            <ChatsIcon size={13} />
+            MY CHATS
+          </span>
           <button
             onClick={onClose}
-            aria-label="Close chat history"
-            className="ml-auto flex-none w-8 h-8 bg-[#CC0000] hover:bg-[#e51b1b] border-2 border-[#7a0000] rounded-md cursor-pointer grid place-items-center"
+            aria-label={docked ? "Collapse chat history" : "Close chat history"}
+            className={`ml-auto flex-none w-8 h-8 border-2 rounded-md cursor-pointer grid place-items-center ${
+              docked
+                ? "bg-[#232b42] hover:bg-[#2b3450] border-[#2b3450] font-pixel text-[9px] text-[#8b93a5]"
+                : "bg-[#CC0000] hover:bg-[#e51b1b] border-[#7a0000]"
+            }`}
           >
-            {/* pixel-art X — same icon used by the chat popup's close button */}
-            <svg width={16} height={16} viewBox="0 0 7 7" style={{ shapeRendering: "crispEdges" }} aria-hidden>
-              {[0, 1, 2, 3, 4, 5, 6].map((i) => (
-                <rect key={i} x={i} y={i} width={1} height={1} fill="#ffffff" />
-              ))}
-              {[0, 1, 2, 4, 5, 6].map((i) => (
-                <rect key={`a${i}`} x={6 - i} y={i} width={1} height={1} fill="#ffffff" />
-              ))}
-            </svg>
+            {docked ? (
+              "\u25c0"
+            ) : (
+              /* pixel-art X — same icon used by the chat popup's close button */
+              <svg width={16} height={16} viewBox="0 0 7 7" style={{ shapeRendering: "crispEdges" }} aria-hidden>
+                {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+                  <rect key={i} x={i} y={i} width={1} height={1} fill="#ffffff" />
+                ))}
+                {[0, 1, 2, 4, 5, 6].map((i) => (
+                  <rect key={`a${i}`} x={6 - i} y={i} width={1} height={1} fill="#ffffff" />
+                ))}
+              </svg>
+            )}
           </button>
         </div>
 

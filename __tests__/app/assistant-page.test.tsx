@@ -664,7 +664,7 @@ describe("AssistantPage — login gate / retry logic", () => {
   });
 });
 
-// Task 9: the "▤ MY CHATS" history drawer — chip visibility, the
+// Task 9: the "MY CHATS" history drawer — chip visibility, the
 // sortConversations wiring between the fetched list and the drawer, and the
 // pin/delete/open handlers' REST calls and optimistic-UI reconciliation.
 describe("AssistantPage — history drawer (Task 9)", () => {
@@ -683,11 +683,11 @@ describe("AssistantPage — history drawer (Task 9)", () => {
     vi.unstubAllGlobals();
   });
 
-  it("only renders the ▤ MY CHATS chip when logged in", async () => {
+  it("only renders the MY CHATS chip when logged in", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ conversations: [] }) });
     vi.stubGlobal("fetch", fetchMock);
     render(<AssistantPage />);
-    expect(screen.queryByText("▤ MY CHATS")).toBeNull();
+    expect(screen.queryByText("MY CHATS")).toBeNull();
   });
 
   it("sorts pinned conversations before more-recent unpinned ones in the drawer (sortConversations wiring)", async () => {
@@ -721,7 +721,7 @@ describe("AssistantPage — history drawer (Task 9)", () => {
     render(<AssistantPage />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/conversations"));
 
-    fireEvent.click(screen.getByText("▤ MY CHATS"));
+    fireEvent.click(screen.getByText("MY CHATS"));
     await screen.findByText("Unpinned but newer");
 
     const titles = screen.getAllByText(/^(Unpinned but newer|Pinned but older)$/).map((el) => el.textContent);
@@ -754,7 +754,7 @@ describe("AssistantPage — history drawer (Task 9)", () => {
 
     render(<AssistantPage />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/conversations"));
-    fireEvent.click(screen.getByText("▤ MY CHATS"));
+    fireEvent.click(screen.getByText("MY CHATS"));
     await screen.findByText("Why is my account on hold?");
 
     fireEvent.click(screen.getByLabelText("Pin conversation"));
@@ -796,7 +796,7 @@ describe("AssistantPage — history drawer (Task 9)", () => {
 
     render(<AssistantPage />);
     await waitFor(() => expect(listCallCount).toBe(1));
-    fireEvent.click(screen.getByText("▤ MY CHATS"));
+    fireEvent.click(screen.getByText("MY CHATS"));
     await screen.findByText("Why is my account on hold?");
 
     fireEvent.click(screen.getByLabelText("Pin conversation"));
@@ -832,7 +832,7 @@ describe("AssistantPage — history drawer (Task 9)", () => {
 
     render(<AssistantPage />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/conversations"));
-    fireEvent.click(screen.getByText("▤ MY CHATS"));
+    fireEvent.click(screen.getByText("MY CHATS"));
     await screen.findByText("Why is my account on hold?");
 
     fireEvent.click(screen.getByLabelText("Delete conversation"));
@@ -876,7 +876,7 @@ describe("AssistantPage — history drawer (Task 9)", () => {
 
     render(<AssistantPage />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/conversations"));
-    fireEvent.click(screen.getByText("▤ MY CHATS"));
+    fireEvent.click(screen.getByText("MY CHATS"));
     fireEvent.click(await screen.findByText("Do I need a new I-20?"));
 
     // The visa expert's chat popup opened for the resumed room...
@@ -984,13 +984,13 @@ describe("AssistantPage — usage HUD, paywall, and Stripe checkout wiring (Task
     fireEvent.click(screen.getByText(/HUSKY PRO/i));
     expect(authClient.subscription.upgrade).toHaveBeenCalledWith({
       plan: "pro",
-      successUrl: "/assistant?upgraded=1",
+      successUrl: "/assistant?upgraded=pro",
       cancelUrl: "/assistant",
     });
   });
 
-  it("on load with ?upgraded=1 in the URL, refetches the conversation list, shows an activation toast, and clears the query param", async () => {
-    window.history.pushState({}, "", "/assistant?upgraded=1");
+  it("on load with ?upgraded=plus in the URL, refetches the conversation list, shows an activation toast, and clears the query param", async () => {
+    window.history.pushState({}, "", "/assistant?upgraded=plus");
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ conversations: [] }) });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -999,5 +999,24 @@ describe("AssistantPage — usage HUD, paywall, and Stripe checkout wiring (Task
     await screen.findByText("HUSKY PLUS ACTIVE!");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/conversations"));
     expect(window.location.search).not.toContain("upgraded");
+  });
+
+  it("names the PRO plan in the activation toast when ?upgraded=pro", async () => {
+    window.history.pushState({}, "", "/assistant?upgraded=pro");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ conversations: [] }) }));
+
+    render(<AssistantPage />);
+
+    await screen.findByText("HUSKY PRO ACTIVE!");
+    expect(screen.queryByText("HUSKY PLUS ACTIVE!")).toBeNull();
+  });
+
+  it("falls back to a neutral label for the older ?upgraded=1 shape", async () => {
+    window.history.pushState({}, "", "/assistant?upgraded=1");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ conversations: [] }) }));
+
+    render(<AssistantPage />);
+
+    await screen.findByText("YOUR PLAN ACTIVE!");
   });
 });

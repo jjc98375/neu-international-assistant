@@ -6,7 +6,7 @@ import { Press_Start_2P, IBM_Plex_Mono } from "next/font/google";
 import { PixelQuad } from "@/components/PixelQuad";
 import { LoginModal } from "@/components/LoginModal";
 import { PaywallModal } from "@/components/PaywallModal";
-import { ChatDrawer, type DrawerConversation } from "@/components/ChatDrawer";
+import { ChatDrawer, ChatsIcon, type DrawerConversation } from "@/components/ChatDrawer";
 import type { Category } from "@/lib/rag-categories";
 import { AVAILABLE_CAMPUSES, CAMPUS_KEYS } from "@/lib/campuses";
 import { authClient } from "@/lib/auth-client";
@@ -85,7 +85,7 @@ function CampusPicker({
       {open && (
         <ul
           role="listbox"
-          className="absolute right-0 top-full mt-2 min-w-full w-max bg-[#12172a] border-2 border-[#FFD23F] rounded-lg py-1.5 shadow-[0_8px_24px_rgba(10,14,25,0.6)] z-50"
+          className="absolute left-0 top-full mt-2 min-w-full w-max bg-[#12172a] border-2 border-[#FFD23F] rounded-lg py-1.5 shadow-[0_8px_24px_rgba(10,14,25,0.6)] z-50"
         >
           {options.map((o) => {
             const isSelected = o.key === value;
@@ -257,7 +257,7 @@ export default function AssistantPage() {
   const [paywallOpen, setPaywallOpen] = useState(false);
   // Small toast-style chip shown briefly after a Stripe checkout redirects
   // back with ?upgraded=1 — cleared automatically after a few seconds.
-  const [upgradedToast, setUpgradedToast] = useState(false);
+  const [upgradedPlan, setUpgradedPlan] = useState<string | null>(null);
   // Active conversation room per expert (undefined = no room yet / anonymous).
   const [conversationIds, setConversationIds] = useState<Record<string, string | undefined>>({});
   // Most recent quota snapshot from /api/assistant — consumed by Task 10's usage UI.
@@ -267,6 +267,10 @@ export default function AssistantPage() {
   // room for auto-resume. Fetched on login, refetched after pin/delete.
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // The history panel docks as a rail once there is room for it; below that
+  // it stays the floating overlay. Tracked in JS rather than a `lg:` class
+  // because the quad's fixed layers need the same breakpoint to shift.
+  const [wideViewport, setWideViewport] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const pendingQuestion = useRef<string | null>(null);
@@ -303,20 +307,46 @@ export default function AssistantPage() {
     if (id && EXPERTS.some((e) => e.id === id)) setActive(id);
   }, []);
 
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const sync = () => setWideViewport(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
+  // On a wide screen the rail is the default state for a signed-in student —
+  // their history is the reason they signed in. Opening it is not a decision
+  // they should have to make on every visit.
+  useEffect(() => {
+    if (session && wideViewport) setDrawerOpen(true);
+  }, [session, wideViewport]);
+
+  // The rail only takes space when it is actually docked open. Every fixed
+  // layer of the quad shifts by the same amount so the scene, the chips and
+  // the chat pull-up all stay square with the rail's edge.
+  const railDocked = Boolean(session) && drawerOpen && wideViewport;
+  const layerLeft = railDocked ? "left-[240px]" : "left-0";
+  const contentLeft = railDocked ? "left-[256px]" : "left-4";
+
   // Stripe checkout redirects back to /assistant?upgraded=1 on success (the
   // successUrl PaywallModal passes to subscription.upgrade). Refetch a probe
   // to refresh session-derived UI, show a brief "activated" toast chip, and
   // drop the query param so a refresh doesn't re-trigger this.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("upgraded") !== "1") return;
+    const upgraded = params.get("upgraded");
+    if (!upgraded) return;
     setPaywallOpen(false);
-    setUpgradedToast(true);
+    // Checkout carries the plan back in the query param; "1" is the older
+    // shape, still honoured so a checkout started before this change lands
+    // on a sensible label rather than nothing.
+    setUpgradedPlan(upgraded === "pro" ? "HUSKY PRO" : upgraded === "plus" ? "HUSKY PLUS" : "YOUR PLAN");
     void loadConversationList();
     params.delete("upgraded");
     const rest = params.toString();
     window.history.replaceState(null, "", rest ? `${window.location.pathname}?${rest}` : window.location.pathname);
-    const timer = setTimeout(() => setUpgradedToast(false), 5000);
+    const timer = setTimeout(() => setUpgradedPlan(null), 5000);
     return () => clearTimeout(timer);
   }, []);
 
@@ -686,11 +716,11 @@ export default function AssistantPage() {
   return (
     <div className={`${pixelFont.variable} ${plexMono.variable}`}>
       {/* Animated pixel-art quad background */}
-      <div className="fixed inset-0">
+      <div className={`fixed top-0 right-0 bottom-0 ${layerLeft}`}>
         <PixelQuad />
       </div>
       <div
-        className="fixed inset-0 pointer-events-none"
+        className={`fixed top-0 right-0 bottom-0 pointer-events-none ${layerLeft}`}
         style={{
           background:
             "linear-gradient(180deg, rgba(10,14,25,0.3) 0%, rgba(10,14,25,0) 20%, rgba(10,14,25,0) 82%, rgba(10,14,25,0.12) 100%)",
@@ -702,33 +732,34 @@ export default function AssistantPage() {
       {/* Click-outside catcher (below characters, above background) */}
       {active && (
         <div
-          className="fixed inset-0 z-[5] bg-[rgba(10,14,25,0.28)]"
+          className={`fixed top-0 right-0 bottom-0 z-[5] bg-[rgba(10,14,25,0.28)] ${layerLeft}`}
           onClick={() => setActive(null)}
         />
       )}
 
       {/* Status + hint chips, below the site navbar */}
-      <div className="fixed top-20 inset-x-4 z-40 flex items-start gap-3 pointer-events-none">
-        <div className="hidden sm:flex items-center bg-[rgba(16,21,36,0.9)] border-2 border-[#2b3450] rounded-[10px] px-3.5 py-2.5">
-          <span className="font-pixel text-[7px] text-[#8b93a5]">
-            5 EXPERTS ON DUTY <span className="quad-blink text-[#FFD23F]">▮</span>
-          </span>
-        </div>
-        <div className="pointer-events-auto">
+      {/* Status + controls, stacked as a narrow rail down the left edge. One
+          row each: laid out side by side they ate the top of the quad and
+          pushed the scene down. */}
+      <div className={`fixed top-20 z-40 flex flex-col items-start gap-2 pointer-events-none ${contentLeft}`}>
+        <div className="w-max pointer-events-auto">
           <CampusPicker value={campus} onChange={setCampus} />
         </div>
         {session && (
           <button
             type="button"
-            onClick={() => setDrawerOpen(true)}
-            className="pointer-events-auto bg-[rgba(16,21,36,0.9)] border-2 border-[#2b3450] hover:border-[#3d4a6b] rounded-lg px-3.5 py-2.5 cursor-pointer"
+            onClick={() => setDrawerOpen((o) => !o)}
+            className="w-max pointer-events-auto bg-[rgba(16,21,36,0.9)] border-2 border-[#2b3450] hover:border-[#3d4a6b] rounded-lg px-3 py-2 cursor-pointer"
           >
-            <span className="font-pixel text-[7px] text-[#f8f6f2]">▤ MY CHATS</span>
+            <span className="flex items-center gap-2 font-pixel text-[7px] text-[#f8f6f2]">
+              <ChatsIcon size={11} />
+              MY CHATS
+            </span>
           </button>
         )}
         {session && usage && (
           <div
-            className={`pointer-events-auto flex items-center bg-[rgba(16,21,36,0.9)] border-2 rounded-[10px] px-3.5 py-2.5 ${
+            className={`w-max pointer-events-auto flex items-center bg-[rgba(16,21,36,0.9)] border-2 rounded-[10px] px-3 py-2 ${
               usage.used >= usage.limit ? "border-[#CC0000]" : "border-[#2b3450]"
             }`}
           >
@@ -741,20 +772,23 @@ export default function AssistantPage() {
             </span>
           </div>
         )}
-        {upgradedToast && (
-          <div className="pointer-events-auto bg-[rgba(16,21,36,0.9)] border-2 border-[#FFD23F] rounded-[10px] px-3.5 py-2.5">
-            <span className="font-pixel text-[7px] text-[#FFD23F]">HUSKY PLUS ACTIVE!</span>
-          </div>
-        )}
-        {!active && (
-          <div className="ml-auto bg-[rgba(16,21,36,0.9)] border-2 border-[#FFD23F] rounded-full px-3.5 py-2.5">
-            <span className="font-pixel text-[7px] text-[#FFD23F]">▼ CLICK AN EXPERT ON THE QUAD</span>
+        {upgradedPlan && (
+          <div className="w-max pointer-events-auto bg-[rgba(16,21,36,0.9)] border-2 border-[#FFD23F] rounded-[10px] px-3 py-2">
+            <span className="font-pixel text-[7px] text-[#FFD23F]">{upgradedPlan} ACTIVE!</span>
           </div>
         )}
       </div>
 
+      {/* The "pick someone" hint is a transient prompt, not a control — it
+          stays opposite the rail so it reads as pointing at the quad. */}
+      {!active && (
+        <div className="fixed top-20 right-4 z-40 bg-[rgba(16,21,36,0.9)] border-2 border-[#FFD23F] rounded-full px-3.5 py-2.5">
+          <span className="font-pixel text-[7px] text-[#FFD23F]">▼ CLICK AN EXPERT ON THE QUAD</span>
+        </div>
+      )}
+
       {/* Characters on the quad */}
-      <div className="fixed inset-0">
+      <div className={`fixed top-0 right-0 bottom-0 ${layerLeft}`}>
         {EXPERTS.map((e, i) => {
           const isActive = e.id === active;
           const isHover = hovered === e.id;
@@ -762,7 +796,7 @@ export default function AssistantPage() {
             <div
               key={e.id}
               className="absolute flex flex-col items-center gap-1 -translate-x-1/2"
-              style={{ left: `${e.x}vw`, bottom: `${e.b}vh`, zIndex: 10 + Math.round(40 - e.b) }}
+              style={{ left: `${e.x}%`, bottom: `${e.b}%`, zIndex: 10 + Math.round(40 - e.b) }}
             >
               <div
                 className="absolute left-1/2 -translate-x-1/2 rounded-full bg-[rgba(10,14,25,0.4)] blur-[3px]"
@@ -814,7 +848,7 @@ export default function AssistantPage() {
         <div
           role="dialog"
           aria-label={activeExpert.title}
-          className="quad-pullup font-plex fixed z-[200] inset-x-4 bottom-0 h-[calc(100vh-88px)] flex flex-col overflow-hidden bg-[rgba(248,246,242,0.97)] border-2 border-b-0 border-[#1a2030] rounded-t-[14px] shadow-[0_-10px_34px_rgba(10,14,25,0.5)]"
+          className={`quad-pullup font-plex fixed z-[200] right-4 bottom-0 h-[calc(100vh-88px)] ${contentLeft} flex flex-col overflow-hidden bg-[rgba(248,246,242,0.97)] border-2 border-b-0 border-[#1a2030] rounded-t-[14px] shadow-[0_-10px_34px_rgba(10,14,25,0.5)]`}
         >
           {/* Header */}
           <div className="flex items-center gap-3.5 px-5 py-3.5 bg-[#1a2030] border-b-2 border-[#2b3450] flex-none">
@@ -1004,6 +1038,7 @@ export default function AssistantPage() {
 
       <ChatDrawer
         open={drawerOpen}
+        docked={railDocked}
         onClose={() => setDrawerOpen(false)}
         conversations={sortConversations(conversations).map((c) => {
           const expert = EXPERTS.find((e) => e.id === c.expertId);

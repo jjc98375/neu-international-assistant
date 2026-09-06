@@ -43,7 +43,7 @@ export function PaywallModal({
     try {
       await authClient.subscription.upgrade({
         plan,
-        successUrl: "/assistant?upgraded=1",
+        successUrl: `/assistant?upgraded=${plan}`,
         cancelUrl: "/assistant",
       });
     } catch (err) {
