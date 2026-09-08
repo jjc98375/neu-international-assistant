@@ -157,4 +157,53 @@ describe("POST /api/assistant", () => {
     expect(store.saveExchange).toHaveBeenCalledWith(
       expect.objectContaining({ expertId: "billing" }));
   });
+
+  it("does not count the question against the quota when persistence fails", async () => {
+    // saveExchange writes the `messages` row that countQuestionsToday reads,
+    // so a failed write means the question was never actually counted —
+    // reporting used+1 leaves the HUD one ahead of the truth until the next
+    // request corrects it.
+    vi.mocked(auth.api.getSession).mockResolvedValue({ user: { id: "u1" } } as never);
+    vi.mocked(store.countQuestionsToday).mockResolvedValue(3);
+    vi.mocked(store.saveExchange).mockRejectedValue(new Error("neon unreachable"));
+    vi.mocked(rag.answerQuestion).mockResolvedValue({ category: "visa", categoryName: "V",
+      question: "q", answer: "a", sources: [] });
+
+    const res = await POST(postReq({ question: "q" }));
+    const data = await res.json();
+
+    // The answer still goes out — a persistence failure must not cost the
+    // student their answer.
+    expect(res.status).toBe(200);
+    expect(data.answer).toBe("a");
+    expect(data.usage).toEqual({ used: 3, limit: 10, tier: "free" });
+  });
+
+  it("returns a JSON 503 when the quota lookup itself fails", async () => {
+    // These two reads sat outside the try block, so a database outage escaped
+    // as an unhandled rejection and Next answered with an HTML 500 — breaking
+    // the JSON error contract every client path is written against.
+    vi.mocked(auth.api.getSession).mockResolvedValue({ user: { id: "u1" } } as never);
+    vi.mocked(store.getActiveSubscriptions).mockRejectedValue(new Error("neon unreachable"));
+
+    const res = await POST(postReq({ question: "q" }));
+    const data = await res.json();
+
+    expect(res.status).toBe(503);
+    expect(data.error).toBe("quota_unavailable");
+    // Fails closed: no answer is generated when entitlement can't be checked.
+    expect(rag.answerQuestion).not.toHaveBeenCalled();
+  });
+
+  it("still counts the question when persistence succeeds", async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue({ user: { id: "u1" } } as never);
+    vi.mocked(store.countQuestionsToday).mockResolvedValue(3);
+    vi.mocked(rag.answerQuestion).mockResolvedValue({ category: "visa", categoryName: "V",
+      question: "q", answer: "a", sources: [] });
+
+    const res = await POST(postReq({ question: "q" }));
+    const data = await res.json();
+
+    expect(data.usage).toEqual({ used: 4, limit: 10, tier: "free" });
+  });
 });

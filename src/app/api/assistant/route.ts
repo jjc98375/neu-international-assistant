@@ -72,16 +72,31 @@ export async function POST(req: Request) {
     if (anonCount >= ANON_LIMIT) {
       return NextResponse.json({ error: "login_required", gate: true }, { status: 401 });
     }
+    // The anonymous count rides on a cookie we always set below, so this
+    // increment is not conditional on any write succeeding.
     usage = { used: anonCount + 1, limit: ANON_LIMIT, tier: "anon" };
   } else {
-    const tier = resolveTier(await getActiveSubscriptions(session.user.id));
-    const used = await countQuestionsToday(session.user.id);
+    // Both reads hit the database. Fail closed and in the same JSON shape as
+    // every other error here — left unguarded, an outage escaped as an
+    // unhandled rejection and the client got an HTML 500 instead.
+    let tier: keyof typeof PLAN_LIMITS;
+    let used: number;
+    try {
+      tier = resolveTier(await getActiveSubscriptions(session.user.id));
+      used = await countQuestionsToday(session.user.id);
+    } catch (e) {
+      console.error("quota lookup failed", e);
+      return NextResponse.json({ error: "quota_unavailable" }, { status: 503 });
+    }
     if (used >= PLAN_LIMITS[tier]) {
       return NextResponse.json(
         { error: "quota_exceeded", usage: { used, limit: PLAN_LIMITS[tier], tier } },
         { status: 429 });
     }
-    usage = { used: used + 1, limit: PLAN_LIMITS[tier], tier };
+    // Reported below as used + 1 only if the exchange actually persists —
+    // countQuestionsToday counts `messages` rows, so a failed write means the
+    // question was never counted.
+    usage = { used, limit: PLAN_LIMITS[tier], tier };
   }
 
   try {
@@ -95,6 +110,7 @@ export async function POST(req: Request) {
           expertId: parsed.data.expertId ?? toExpertId(result.category),
           campus: resolvedCampus, question, answer: result,
         }));
+        usage = { ...usage, used: usage.used + 1 };
       } catch (e) {
         console.error("persist failed", e); // RAG answer still returned
       }
