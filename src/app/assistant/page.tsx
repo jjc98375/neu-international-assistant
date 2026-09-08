@@ -6,7 +6,8 @@ import { Press_Start_2P, IBM_Plex_Mono } from "next/font/google";
 import { PixelQuad } from "@/components/PixelQuad";
 import { LoginModal } from "@/components/LoginModal";
 import { PaywallModal } from "@/components/PaywallModal";
-import { ChatDrawer, ChatsIcon, type DrawerConversation } from "@/components/ChatDrawer";
+import { ChatDrawer, type DrawerConversation } from "@/components/ChatDrawer";
+import { ChatsIcon, PixelCursor, PixelTriangle } from "@/components/PixelGlyphs";
 import type { Category } from "@/lib/rag-categories";
 import { AVAILABLE_CAMPUSES, CAMPUS_KEYS } from "@/lib/campuses";
 import { authClient } from "@/lib/auth-client";
@@ -77,8 +78,8 @@ function CampusPicker({
       >
         <span className="hidden sm:inline font-pixel text-[7px] text-[#8b93a5]">CAMPUS</span>
         <span className="font-pixel text-[7px] text-[#FFD23F] whitespace-nowrap">{currentLabel}</span>
-        <span className={`font-pixel text-[7px] text-[#8b93a5] transition-transform ${open ? "rotate-180" : ""}`}>
-          ▾
+        <span className={`flex text-[#8b93a5] transition-transform ${open ? "rotate-180" : ""}`}>
+          <PixelTriangle dir="down" size={7} />
         </span>
       </button>
 
@@ -768,7 +769,7 @@ export default function AssistantPage() {
                 usage.used >= usage.limit ? "text-[#ff6b6b]" : "text-[#8b93a5]"
               }`}
             >
-              TODAY {usage.used}/{usage.limit} ▮
+              TODAY {usage.used}/{usage.limit} <PixelCursor size={7} className="inline-block align-middle" />
             </span>
           </div>
         )}
@@ -783,7 +784,10 @@ export default function AssistantPage() {
           stays opposite the rail so it reads as pointing at the quad. */}
       {!active && (
         <div className="fixed top-20 right-4 z-40 bg-[rgba(16,21,36,0.9)] border-2 border-[#FFD23F] rounded-full px-3.5 py-2.5">
-          <span className="font-pixel text-[7px] text-[#FFD23F]">▼ CLICK AN EXPERT ON THE QUAD</span>
+          <span className="flex items-center gap-2 font-pixel text-[7px] text-[#FFD23F]">
+            <PixelTriangle dir="down" size={8} />
+            CLICK AN EXPERT ON THE QUAD
+          </span>
         </div>
       )}
 
@@ -811,8 +815,8 @@ export default function AssistantPage() {
                 style={{ animationDelay: `${i * 0.3}s` }}
               >
                 {isActive && (
-                  <div className="quad-bounce absolute -top-5 left-1/2 -translate-x-1/2 font-pixel text-[10px] text-[#FFD23F] [text-shadow:1px_1px_0_#1a2030]">
-                    ▼
+                  <div className="quad-bounce absolute -top-5 left-1/2 -translate-x-1/2 flex text-[#FFD23F] drop-shadow-[1px_1px_0_#1a2030]">
+                    <PixelTriangle dir="down" size={11} />
                   </div>
                 )}
                 <svg
@@ -1019,7 +1023,10 @@ export default function AssistantPage() {
               disabled={busyId === activeExpert.id || !input.trim()}
               className="flex-none font-pixel text-[10px] text-white bg-[#CC0000] hover:bg-[#e51b1b] disabled:opacity-50 disabled:hover:bg-[#CC0000] border-2 border-[#1a2030] rounded-lg px-4 sm:px-6 cursor-pointer disabled:cursor-default shadow-[0_3px_0_#7a0000] enabled:active:translate-y-[2px] enabled:active:shadow-[0_1px_0_#7a0000]"
             >
-              SEND ▶
+              <span className="flex items-center gap-2">
+                SEND
+                <PixelTriangle dir="right" size={8} />
+              </span>
             </button>
           </div>
         </div>

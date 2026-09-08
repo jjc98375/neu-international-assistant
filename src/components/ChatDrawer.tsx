@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ChatsIcon, PixelPin, PixelTriangle } from "@/components/PixelGlyphs";
 
 // Shape the page hands down to each row: the raw conversation-history fields
 // (Task 6/9's API surface) plus the sprite id / label resolved from the
@@ -16,27 +17,6 @@ export interface DrawerConversation {
   /** key into page.tsx's SPRITES map, rendered here via <use href="#sp-…"> */
   sprite: string;
   label: string;
-}
-
-/** Pixel speech bubble with two text lines. Replaces the ▤ that used to sit
- *  here: Press Start 2P has no glyph for U+25A4, so it fell through to a
- *  fallback font and rendered as an unlabelled box. */
-export function ChatsIcon({ size = 12 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 10 10" style={{ shapeRendering: "crispEdges" }} aria-hidden>
-      {/* bubble outline */}
-      <rect x={0} y={0} width={9} height={1} fill="currentColor" />
-      <rect x={0} y={6} width={9} height={1} fill="currentColor" />
-      <rect x={0} y={0} width={1} height={7} fill="currentColor" />
-      <rect x={8} y={0} width={1} height={7} fill="currentColor" />
-      {/* text lines */}
-      <rect x={2} y={2} width={5} height={1} fill="currentColor" />
-      <rect x={2} y={4} width={3} height={1} fill="currentColor" />
-      {/* tail */}
-      <rect x={2} y={7} width={2} height={1} fill="currentColor" />
-      <rect x={2} y={8} width={1} height={1} fill="currentColor" />
-    </svg>
-  );
 }
 
 export function ChatDrawer({
@@ -125,7 +105,7 @@ export function ChatDrawer({
             }`}
           >
             {docked ? (
-              "\u25c0"
+              <PixelTriangle dir="left" size={9} />
             ) : (
               /* pixel-art X — same icon used by the chat popup's close button */
               <svg width={16} height={16} viewBox="0 0 7 7" style={{ shapeRendering: "crispEdges" }} aria-hidden>
@@ -182,7 +162,7 @@ export function ChatDrawer({
                   <div className="flex items-center gap-1.5 min-w-0">
                     {c.pinned && (
                       <span className="flex-none text-[10px]" aria-hidden>
-                        📌
+                        <PixelPin size={11} />
                       </span>
                     )}
                     <span className="font-plex text-[13px] text-[#f8f6f2] truncate">{c.title || c.label}</span>
@@ -202,7 +182,7 @@ export function ChatDrawer({
                     aria-label={c.pinned ? "Unpin conversation" : "Pin conversation"}
                     className="w-7 h-7 grid place-items-center rounded-md border-2 border-[#2b3450] hover:border-[#FFD23F] bg-[#1a2030] cursor-pointer text-[11px] leading-none"
                   >
-                    📌
+                    <PixelPin size={11} />
                   </button>
                   {confirmId === c.id ? (
                     <button
