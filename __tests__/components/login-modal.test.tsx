@@ -15,7 +15,7 @@ describe("LoginModal", () => {
   it("renders both OAuth buttons and the email form when open", () => {
     render(<LoginModal open onClose={() => {}} onSuccess={() => {}} />);
     expect(screen.getByText(/GOOGLE/i)).toBeTruthy();
-    expect(screen.getByText(/CONTINUE WITH NEU/)).toBeTruthy();
+    expect(screen.getByText(/CONTINUE WITH GITHUB/)).toBeTruthy();
     expect(screen.getByPlaceholderText(/email/i)).toBeTruthy();
   });
   it("renders nothing when closed", () => {
@@ -32,12 +32,12 @@ describe("LoginModal", () => {
     });
   });
 
-  it("calls signIn.social with {provider: 'microsoft', callbackURL} when the Microsoft button is clicked", async () => {
+  it("calls signIn.social with {provider: 'github', callbackURL} when the GitHub button is clicked", async () => {
     vi.mocked(authClient.signIn.social).mockResolvedValue({ data: {}, error: null } as never);
     render(<LoginModal open onClose={() => {}} onSuccess={() => {}} />);
-    fireEvent.click(screen.getByText(/CONTINUE WITH NEU/));
+    fireEvent.click(screen.getByText(/CONTINUE WITH GITHUB/));
     await waitFor(() => {
-      expect(authClient.signIn.social).toHaveBeenCalledWith({ provider: "microsoft", callbackURL: "/assistant" });
+      expect(authClient.signIn.social).toHaveBeenCalledWith({ provider: "github", callbackURL: "/assistant" });
     });
   });
 

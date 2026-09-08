@@ -5,7 +5,7 @@ import { authClient } from "@/lib/auth-client";
 
 /* ── Provider brand marks ───────────────────────────────────────────────────
    These are the only non-pixel artwork in the modal, on purpose: Google's and
-   Microsoft's marks may not be redrawn or restyled per their brand guidelines,
+   GitHub's marks may not be redrawn or restyled per their brand guidelines,
    and the smooth vectors against the blocky frame read as "external service"
    rather than decoration.                                                    */
 
@@ -32,13 +32,10 @@ function GoogleMark() {
   );
 }
 
-function MicrosoftMark() {
+function GitHubMark() {
   return (
-    <svg width={16} height={16} viewBox="0 0 23 23" style={{ shapeRendering: "crispEdges" }} aria-hidden>
-      <rect x={1} y={1} width={10} height={10} fill="#F25022" />
-      <rect x={12} y={1} width={10} height={10} fill="#7FBA00" />
-      <rect x={1} y={12} width={10} height={10} fill="#00A4EF" />
-      <rect x={12} y={12} width={10} height={10} fill="#FFB900" />
+    <svg width={16} height={16} viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
     </svg>
   );
 }
@@ -90,7 +87,7 @@ export function LoginModal({
     }
   }
 
-  async function social(provider: "google" | "microsoft") {
+  async function social(provider: "google" | "github") {
     if (busy) return;
     setError(null);
     setBusy(true);
@@ -99,7 +96,7 @@ export function LoginModal({
       if (res.error)
         setError(
           res.error.message ??
-            `Couldn't reach ${provider === "google" ? "Google" : "Microsoft"}. Try again.`,
+            `Couldn't reach ${provider === "google" ? "Google" : "GitHub"}. Try again.`,
         );
       // On success, better-auth performs its own full-page OAuth redirect —
       // nothing further to do here.
@@ -211,11 +208,11 @@ export function LoginModal({
           </button>
           <button
             type="button"
-            onClick={() => social("microsoft")}
+            onClick={() => social("github")}
             className={`${socialClass} text-[#f8f6f2] bg-[#232b42] hover:bg-[#2b3450] border-[#2b3450]`}
           >
-            <MicrosoftMark />
-            CONTINUE WITH NEU
+            <GitHubMark />
+            CONTINUE WITH GITHUB
           </button>
         </div>
 
