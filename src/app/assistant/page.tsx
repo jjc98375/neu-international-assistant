@@ -8,6 +8,7 @@ import { LoginModal } from "@/components/LoginModal";
 import { PaywallModal } from "@/components/PaywallModal";
 import { ChatDrawer, type DrawerConversation } from "@/components/ChatDrawer";
 import { ChatsIcon, PixelCursor, PixelTriangle } from "@/components/PixelGlyphs";
+import type { UsageSnapshot } from "@/lib/quota";
 import type { Category } from "@/lib/rag-categories";
 import { AVAILABLE_CAMPUSES, CAMPUS_KEYS } from "@/lib/campuses";
 import { authClient } from "@/lib/auth-client";
@@ -262,7 +263,7 @@ export default function AssistantPage() {
   // Active conversation room per expert (undefined = no room yet / anonymous).
   const [conversationIds, setConversationIds] = useState<Record<string, string | undefined>>({});
   // Most recent quota snapshot from /api/assistant — consumed by Task 10's usage UI.
-  const [usage, setUsage] = useState<{ used: number; limit: number; tier: string } | null>(null);
+  const [usage, setUsage] = useState<UsageSnapshot | null>(null);
   // Full conversation-history list (Task 9's drawer) — distinct from
   // conversationIds above, which only tracks each expert's single most-recent
   // room for auto-resume. Fetched on login, refetched after pin/delete.

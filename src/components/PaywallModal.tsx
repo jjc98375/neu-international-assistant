@@ -2,15 +2,7 @@
 
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
-
-// Shared shape with page.tsx's `usage` state (Task 8) — kept structurally
-// compatible rather than imported so this component has no import-cycle risk
-// back into page.tsx.
-export interface UsageSnapshot {
-  used: number;
-  limit: number;
-  tier: string;
-}
+import type { UsageSnapshot } from "@/lib/quota";
 
 interface Plan {
   id: "plus" | "pro";

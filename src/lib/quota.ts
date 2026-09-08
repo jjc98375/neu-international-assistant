@@ -2,6 +2,15 @@
 export const PLAN_LIMITS = { free: 10, plus: 30, pro: 100 } as const;
 export type Tier = keyof typeof PLAN_LIMITS;
 
+/** The `usage` object every /api/assistant response carries. Anonymous
+ *  callers report tier "anon", which is outside PLAN_LIMITS, so the tier is
+ *  widened here rather than reusing Tier. */
+export interface UsageSnapshot {
+  used: number;
+  limit: number;
+  tier: Tier | "anon";
+}
+
 type EtParts = { year: number; month: number; day: number; hour: number; minute: number; second: number };
 
 function etParts(at: Date): EtParts {

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ChatsIcon, PixelPin, PixelTriangle } from "@/components/PixelGlyphs";
+import type { UsageSnapshot } from "@/lib/quota";
 
 // Shape the page hands down to each row: the raw conversation-history fields
 // (Task 6/9's API surface) plus the sprite id / label resolved from the
@@ -43,7 +44,7 @@ export function ChatDrawer({
   onOpen: (convo: DrawerConversation) => void;
   onPin: (id: string, pinned: boolean) => void;
   onDelete: (id: string) => void;
-  usage: { used: number; limit: number; tier: string } | null;
+  usage: UsageSnapshot | null;
   onManagePlan: () => void;
   onLogout: () => void;
 }) {
