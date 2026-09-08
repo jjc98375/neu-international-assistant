@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { authClient } from "@/lib/auth-client";
 
 /* ── Provider brand marks ───────────────────────────────────────────────────
@@ -61,6 +61,19 @@ export function LoginModal({
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Closing renders null but leaves the component mounted, so every field
+  // survives. Wipe them, or the next student to hit the gate is handed the
+  // previous one's typed password and a stale error.
+  useEffect(() => {
+    if (open) return;
+    setMode("login");
+    setEmail("");
+    setPassword("");
+    setName("");
+    setError(null);
+    setBusy(false);
+  }, [open]);
 
   if (!open) return null;
 
